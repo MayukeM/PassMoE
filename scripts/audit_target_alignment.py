@@ -2,17 +2,45 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASELINE_JSONL = (
-    r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl"
+
+
+def passllm_code_root() -> Path:
+    value = os.environ.get("PASSLLM_CODE_ROOT") or os.environ.get("PASSLLM_FIELDDROP_CODE_ROOT")
+    if value:
+        return Path(value)
+    return REPO_ROOT / "external" / "PassLLM-FieldDrop" / "code"
+
+
+def env_or_path(env_name: str, default_path: Path) -> str:
+    return os.environ.get(env_name, str(default_path))
+
+
+def passllm_quick_root() -> Path:
+    value = os.environ.get("PASSLLM_QUICK_ROOT")
+    if value:
+        return Path(value)
+    return passllm_code_root() / "result" / "quick"
+
+
+DEFAULT_BASELINE_JSONL = env_or_path(
+    "PASSLLM_FD500K_P00_JSONL",
+    passllm_quick_root() / "fd500k_p00" / "input_output.jsonl",
 )
-DEFAULT_TRAIN_DATA = r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_sample_10k.json"
-DEFAULT_TEST_DATA = r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json"
+DEFAULT_TRAIN_DATA = env_or_path(
+    "PASSLLM_CLIXSENSE_TRAIN",
+    passllm_code_root() / "data" / "clixsense" / "clixsense_sample_10k.json",
+)
+DEFAULT_TEST_DATA = env_or_path(
+    "PASSLLM_CLIXSENSE_TEST",
+    passllm_code_root() / "data" / "clixsense" / "clixsense_test_1000.json",
+)
 DEFAULT_EXPORT = r"data\clixsense\clixsense_test_500_from_fd500k_p00.json"
 DEFAULT_FILTERED_TRAIN = r"data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl"
 DEFAULT_REPORT_JSON = r"artifacts\reports\target_alignment_audit.json"

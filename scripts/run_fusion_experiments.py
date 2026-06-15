@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,13 +16,30 @@ EXPERIMENTS = [
 ]
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def passllm_code_root() -> Path:
+    value = os.environ.get("PASSLLM_CODE_ROOT") or os.environ.get("PASSLLM_FIELDDROP_CODE_ROOT")
+    if value:
+        return Path(value)
+    return REPO_ROOT / "external" / "PassLLM-FieldDrop" / "code"
+
+
+def passllm_quick_root() -> str:
+    value = os.environ.get("PASSLLM_QUICK_ROOT")
+    if value:
+        return value
+    return str(passllm_code_root() / "result" / "quick")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Reproduce CPU-side PassMoE fusion results on local PassLLM quick JSONL files."
     )
     parser.add_argument(
         "--quick-root",
-        default=r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick",
+        default=passllm_quick_root(),
         help="Directory containing <variant>/input_output.jsonl from PassLLM quick runs.",
     )
     parser.add_argument("--out-dir", default="artifacts/fusion")
@@ -38,7 +56,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = REPO_ROOT
     quick_root = Path(args.quick_root)
     out_dir = (repo_root / args.out_dir).resolve()
     report_path = (repo_root / args.report).resolve()

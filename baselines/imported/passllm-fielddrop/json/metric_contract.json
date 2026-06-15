@@ -2,7 +2,7 @@
   "baseline_id": "passllm-fielddrop",
   "task": "targeted password guessing",
   "dataset": "local PassLLM-FieldDrop quick evaluation set",
-  "split_contract": "Existing quick result JSONL files under D:\\paper\\1-ACCEPT\\PassLLM-FieldDrop\\code\\result\\quick. Each row has a real password, generated candidate list, and min_cracked_guess_number.",
+  "split_contract": "Existing quick result JSONL files under ${PASSLLM_QUICK_ROOT:-external/PassLLM-FieldDrop/code/result/quick}. Each row has a real password, generated candidate list, and min_cracked_guess_number.",
   "primary_metric": "sr100",
   "metric_directions": {
     "sr1": "higher_is_better",

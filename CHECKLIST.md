@@ -10,7 +10,7 @@
 
 - [x] PassMoE source downloaded.
 - [x] PassLLM source downloaded for reference.
-- [x] Local `D:\paper` password/model assets scanned at coarse level.
+- [x] Local password/model assets scanned at coarse level.
 - [x] `PLAN.md` captures route, command path, expected outputs, acceptance condition, and fallback.
 - [x] upstream PassMoE compile/import state audited and repair route chosen.
 - [x] repaired code imports cleanly.
@@ -77,11 +77,11 @@
 - [x] formal result report renderer added; `render_formal_report.py` writes `formal_result_report.md/json` and separates incomplete formal runs from diagnostic CPU/subset smoke runs.
 - [x] formal runner now auto-renders `formal_result_report.md/json` after preflight, score-only, diagnostic execute, and full execute unless `--skip-result-report` is passed.
 - [x] formal preflight now writes `run_formal_cuda.ps1`, a runner-based CUDA handoff script that preserves explicit manifest settings and refreshes status/report after execution.
-- [x] post-move manifest path audit added; status and validation now check that formal artifacts were generated under current repo root `D:\paper\passllm-moe\PassMoE`, and the current formal manifest passes this audit.
+- [x] post-move manifest path audit added; status and validation now check that formal artifacts were generated under the current repo root, and the current formal manifest passes this audit.
 - [x] formal status completion gate hardened; a stale passed `formal_validation.json` no longer marks a run complete unless JSONL row counts and required postprocess artifacts are present.
 - [x] formal row-count gate added; partial JSONL is rejected in execute mode unless `--allow-partial-jsonl` is explicit.
 - [x] formal baseline default corrected to `fd500k_p00_unique` to avoid the duplicated 503-row quick anchor.
-- [x] `fd500k_p00_unique_fusion` score-only supplementary artifact regenerated under `D:\paper\passllm-moe\PassMoE`; validation is `passed` and path audit is clean.
+- [x] `fd500k_p00_unique_fusion` score-only supplementary artifact regenerated under the current repo root; validation is `passed` and path audit is clean.
 - [x] current local validation passed: `py_compile`, formal preflight, JSONL scoring, data inspection, and independent tiny CPU smoke under `runs/current_validation_smoke`.
 - [x] formal preflight now validates resolved local Qwen and imported PassLLM/FieldDrop adapter assets before CUDA execution.
 - [x] actual local Qwen + imported FieldDrop adapter construction verified on CPU: LoRA merge `72` modules, `0` skipped; total parameters `494,172,675`, trainable `139,907`.
@@ -92,7 +92,7 @@
 - [x] real local Qwen path with imported FieldDrop adapter verified end-to-end on CPU diagnostic: `artifacts/formal/qwen_fielddrop_tiny_execute_smoke/formal_validation.json` is `passed` and its report is `diagnostic_only`.
 - [x] auto-report execute smoke passed: `artifacts/formal/auto_report_execute_smoke/formal_result_report.json` is generated automatically and marked `diagnostic_only`.
 - [x] diagnostic runner support added: `--max-eval-samples` and explicit no-adapter aliases `none`, `null`, `-`.
-- [ ] CUDA formal neural comparison still needs to run: `.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1` from `D:\paper\passllm-moe\PassMoE` on a CUDA-enabled PyTorch host.
+- [ ] CUDA formal neural comparison still needs to run: `.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1` from the repo root on a CUDA-enabled PyTorch host.
 
 ## Implementation
 

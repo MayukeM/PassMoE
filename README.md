@@ -48,16 +48,17 @@ Important files:
 
 ## Train On A Local Password File
 
-Example using a local RockYou text file found under `D:\paper`:
+Example using a local RockYou-style text file. Set `LOCAL_PASSWORD_FILE` to the
+file on your machine:
 
 ```bash
-python main.py train --base-model tiny --data-path D:\paper\ccs_ps_psm\code\data\data\rockyou.txt --max-train-samples 1000 --epochs 1 --batch-size 32 --hidden-dim 64 --lora-rank 8 --beam-width 32 --num-passwords 200 --max-length 20 --run-name tiny_rockyou_1k
+python main.py train --base-model tiny --data-path "${LOCAL_PASSWORD_FILE}" --max-train-samples 1000 --epochs 1 --batch-size 32 --hidden-dim 64 --lora-rank 8 --beam-width 32 --num-passwords 200 --max-length 20 --run-name tiny_rockyou_1k
 ```
 
 ## Targeted PassLLM-Style Smoke
 
 ```bash
-python main.py train --task targeted --base-model tiny --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 100 --epochs 1 --batch-size 8 --hidden-dim 64 --lora-rank 8 --beam-width 8 --num-passwords 100 --max-length 256 --target-eval-samples 10 --target-candidates-per-user 20 --run-name tiny_clixsense_targeted_100
+python main.py train --task targeted --base-model tiny --data-path "${PASSLLM_CODE_ROOT}/data/clixsense/clixsense_test_1000.json" --max-train-samples 100 --epochs 1 --batch-size 8 --hidden-dim 64 --lora-rank 8 --beam-width 8 --num-passwords 100 --max-length 256 --target-eval-samples 10 --target-candidates-per-user 20 --run-name tiny_clixsense_targeted_100
 ```
 
 The targeted evaluator writes PassLLM-compatible rows to:
@@ -71,7 +72,7 @@ runs/<run_name>/targeted_input_output.jsonl
 The local Qwen2.5-0.5B model can be checked without generation:
 
 ```bash
-python main.py train --task targeted --base-model local-qwen --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_targeted_micro --skip-generation
+python main.py train --task targeted --base-model local-qwen --data-path "${PASSLLM_CODE_ROOT}/data/clixsense/clixsense_test_1000.json" --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_targeted_micro --skip-generation
 ```
 
 This verifies Qwen forward/backward on the PassMoE adapters. It is not a
@@ -84,7 +85,7 @@ It is used here only as an imported PassLLM baseline or initialization
 foundation; it is not part of the PassMoE method claim.
 
 ```bash
-python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_fielddrop_passmoe_micro --skip-generation
+python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --data-path "${PASSLLM_CODE_ROOT}/data/clixsense/clixsense_test_1000.json" --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_fielddrop_passmoe_micro --skip-generation
 ```
 
 This merges the frozen imported PassLLM/FieldDrop LoRA weights into the Qwen
@@ -428,14 +429,14 @@ PassLLM-comparable result.
 ## Score Existing PassLLM/PassMoE JSONL
 
 ```bash
-python main.py score-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --budgets 1,10,50,100
+python main.py score-jsonl --jsonl "${PASSLLM_QUICK_ROOT}/fd500k_p00/input_output.jsonl" --budgets 1,10,50,100
 python main.py score-jsonl --jsonl runs\tiny_clixsense_targeted_100\targeted_input_output.jsonl --budgets 1,10,50,100
 ```
 
 To recompute ranks directly from each row's `outputPasswords` list:
 
 ```bash
-python main.py score-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --budgets 1,10,50,100 --recompute-from-candidates
+python main.py score-jsonl --jsonl "${PASSLLM_QUICK_ROOT}/fd500k_p00/input_output.jsonl" --budgets 1,10,50,100 --recompute-from-candidates
 ```
 
 ## Fuse Existing PassLLM Candidates With PassMoE Experts
@@ -464,9 +465,9 @@ The current conservative default was selected by training on
 quick-output variant. It uses `--score-expert-weight 0.05`.
 
 ```bash
-python main.py fuse-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --out-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --out-metrics artifacts\fusion\fd500k_score_m80_w0p05_o2_metrics.json --strategy score --max-expert-candidates 80 --score-expert-weight 0.05 --budgets 1,10,50,100
+python main.py fuse-jsonl --jsonl "${PASSLLM_QUICK_ROOT}/fd500k_p00/input_output.jsonl" --out-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --out-metrics artifacts\fusion\fd500k_score_m80_w0p05_o2_metrics.json --strategy score --max-expert-candidates 80 --score-expert-weight 0.05 --budgets 1,10,50,100
 python main.py score-jsonl --jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --budgets 1,10,50,100 --recompute-from-candidates
-python main.py analyze-fusion --original-jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --fused-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --budgets 1,10,50,100 --bootstrap-iters 2000 --out artifacts\fusion\fd500k_score_m80_w0p05_o2_analysis.json
+python main.py analyze-fusion --original-jsonl "${PASSLLM_QUICK_ROOT}/fd500k_p00/input_output.jsonl" --fused-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --budgets 1,10,50,100 --bootstrap-iters 2000 --out artifacts\fusion\fd500k_score_m80_w0p05_o2_analysis.json
 ```
 
 On the local `fd500k_p00` quick result, this raises SR@100 from `0.0736` to
@@ -481,7 +482,7 @@ fusion. The score-only runner now automatically runs the formal validator with
 has variable candidate-list lengths:
 
 ```bash
-python scripts/deduplicate_jsonl.py --input D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --output artifacts\formal\fd500k_p00_unique_fusion\input_output_unique.jsonl --key index --policy first --report artifacts\formal\fd500k_p00_unique_fusion\dedupe_report.json
+python scripts/deduplicate_jsonl.py --input "${PASSLLM_QUICK_ROOT}/fd500k_p00/input_output.jsonl" --output artifacts\formal\fd500k_p00_unique_fusion\input_output_unique.jsonl --key index --policy first --report artifacts\formal\fd500k_p00_unique_fusion\dedupe_report.json
 python scripts/run_formal_passmoe.py --score-only --run-name fd500k_p00_unique_fusion --jsonl artifacts\formal\fd500k_p00_unique_fusion\input_output_unique.jsonl --baseline-variant fd500k_p00_unique --budgets 1,10,50,100 --fusion-bootstrap-iters 2000 --force
 ```
 
@@ -548,7 +549,7 @@ minimum max length for nonzero password labels in that slice is `87`.
 ## Audit Target Alignment
 
 ```bash
-python scripts/audit_target_alignment.py --train-data D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_train_50.jsonl --export-filtered-train data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl
+python scripts/audit_target_alignment.py --train-data "${PASSLLM_CODE_ROOT}/data/clixsense/clixsense_train_50.jsonl" --export-filtered-train data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl
 ```
 
 This exports `data/clixsense/clixsense_test_500_from_fd500k_p00.json` from the
@@ -558,17 +559,19 @@ The latest reports are under `artifacts/reports/target_alignment_audit*.md`.
 ## Inspect A Data File
 
 ```bash
-python main.py inspect-data --data-path D:\paper\ccs_ps_psm\code\data\data\rockyou.txt --max-train-samples 5
+python main.py inspect-data --data-path "${LOCAL_PASSWORD_FILE}" --max-train-samples 5
 ```
 
 ## Local PassLLM Assets
 
-The current machine already has useful PassLLM assets:
+Set these environment variables to point at your local PassLLM assets:
 
-- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code`
-- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\model\Qwen2.5-0.5B-Instruct`
-- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints`
-- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data`
+- `PASSLLM_CODE_ROOT`: PassLLM/FieldDrop code root
+- `PASSLLM_QUICK_ROOT`: quick result root; defaults to
+  `${PASSLLM_CODE_ROOT}/result/quick`
+- `PASSLLM_QWEN_MODEL`: optional explicit Qwen model directory
+- `PASSLLM_FIELDDROP_ADAPTER`: optional explicit FieldDrop adapter directory
+- `LOCAL_PASSWORD_FILE`: optional local password-list file for ad hoc smoke tests
 
 The imported baseline contract is recorded at:
 

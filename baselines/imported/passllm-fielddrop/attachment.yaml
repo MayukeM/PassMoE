@@ -1,12 +1,12 @@
 baseline_id: passllm-fielddrop
 route: imported
-source_root: D:\paper\1-ACCEPT\PassLLM-FieldDrop\code
+source_root: ${PASSLLM_CODE_ROOT:-external/PassLLM-FieldDrop/code}
 model: Qwen2.5-0.5B-Instruct + LoRA
-primary_checkpoint: D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints\fielddrop_500k_p04
+primary_checkpoint: ${PASSLLM_FIELDDROP_ADAPTER:-external/PassLLM-FieldDrop/code/checkpoints/fielddrop_500k_p04}
 reference_results:
-  baseline10k_p00: D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\baseline10k_p00\input_output.jsonl
-  baseline500k_p00: D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\baseline500k_p00\input_output.jsonl
-  fd500k_p00: D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl
+  baseline10k_p00: ${PASSLLM_QUICK_ROOT:-external/PassLLM-FieldDrop/code/result/quick}/baseline10k_p00/input_output.jsonl
+  baseline500k_p00: ${PASSLLM_QUICK_ROOT:-external/PassLLM-FieldDrop/code/result/quick}/baseline500k_p00/input_output.jsonl
+  fd500k_p00: ${PASSLLM_QUICK_ROOT:-external/PassLLM-FieldDrop/code/result/quick}/fd500k_p00/input_output.jsonl
 comparison_note: >
   Imported as a local PassLLM-style baseline anchor. Metrics are parsed from
   existing quick evaluation JSONL files; no new PassLLM inference was launched

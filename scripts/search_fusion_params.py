@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,20 @@ from fusion import (  # noqa: E402
 DEFAULT_VARIANTS = ("baseline10k_p00", "baseline500k_p00", "fd500k_p00")
 
 
+def passllm_code_root() -> Path:
+    value = os.environ.get("PASSLLM_CODE_ROOT") or os.environ.get("PASSLLM_FIELDDROP_CODE_ROOT")
+    if value:
+        return Path(value)
+    return REPO_ROOT / "external" / "PassLLM-FieldDrop" / "code"
+
+
+def passllm_quick_root() -> str:
+    value = os.environ.get("PASSLLM_QUICK_ROOT")
+    if value:
+        return value
+    return str(passllm_code_root() / "result" / "quick")
+
+
 @dataclass(frozen=True)
 class PreparedRow:
     row: dict[str, Any]
@@ -49,7 +64,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--quick-root",
-        default=r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick",
+        default=passllm_quick_root(),
         help="Directory containing <variant>/input_output.jsonl from PassLLM quick runs.",
     )
     parser.add_argument("--train-variants", default="baseline10k_p00,baseline500k_p00")

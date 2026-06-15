@@ -3,19 +3,18 @@
 ## 1. Core Contract
 
 - quest goal: revive PassMoE-P locally, make it reproducible, and compare it fairly against a PassLLM-style baseline.
-- user's core requirements: download the GitHub code, fix it because it does not run, reuse local `D:\paper` datasets/checkpoints when needed, and preserve the PassMoE-P idea unless the paper idea is technically flawed.
-- non-negotiable user constraints: prefer local assets from `D:\paper`; use PassLLM code as a practical foundation when needed; target performance should be at least comparable to PassLLM and ideally better.
+- user's core requirements: download the GitHub code, fix it because it does not run, reuse local datasets/checkpoints when needed, and preserve the PassMoE-P idea unless the paper idea is technically flawed.
+- non-negotiable user constraints: prefer local assets supplied outside the repository; use PassLLM code as a practical foundation when needed; target performance should be at least comparable to PassLLM and ideally better.
 - chosen baseline route: repair PassMoE source plus import PassLLM implementation ideas.
 - baseline id: passllm-local-qwen0.5b / passmoe-revived.
 - source paper: `ICASSP_2026_Camera_Ready.pdf` in this directory.
-- source repo: `https://github.com/MayukeM/PassMoE`, downloaded under `D:\paper\passllm-moe`.
-- PassLLM reference repo: `https://github.com/Tzohar/PassLLM`, downloaded under `D:\paper\passllm-moe`.
+- source repo: `https://github.com/MayukeM/PassMoE`, downloaded under the local workspace.
+- PassLLM reference repo: `https://github.com/Tzohar/PassLLM`, downloaded under the local workspace.
 - local reusable assets found so far:
-  - `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\model\Qwen2.5-0.5B-Instruct`
-  - `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints\...`
-  - `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\...`
-  - `D:\paper\ccs_pg4_mask\_external\PassLLM-zyk\...`
-  - `D:\paper\ccs_ps_psm\code\data\data\rockyou.txt`
+  - `${PASSLLM_CODE_ROOT}/model/Qwen2.5-0.5B-Instruct`
+  - `${PASSLLM_CODE_ROOT}/checkpoints/...`
+  - `${PASSLLM_CODE_ROOT}/data/...`
+  - `${LOCAL_PASSWORD_FILE}` for optional ad hoc password-list smoke tests
 - task: password generation / guessing research reproduction with offline evaluation.
 - dataset / split: start with tiny smoke sample generated locally; then use local CSDN/ClixSense/RockYou or LinkedIn splits with overlap controls.
 - metric contract: loss/perplexity for smoke; hit-rate / success-rate at K for guessing (`hit@1`, `hit@10`, `hit@100`, `hit@1000`) for comparable runs.
@@ -29,8 +28,8 @@
 
 ## 2. Execution Path
 
-- project directory: `D:\paper\passllm-moe`
-- repaired PassMoE code root: `D:\paper\passllm-moe\PassMoE`
+- project directory: local workspace root
+- repaired PassMoE code root: repo root
 - environment plan: use the local Python environment first; add a project venv only if dependency conflicts appear.
 - required downloads: already downloaded PassMoE and PassLLM source zips; use local model/checkpoint paths before downloading large models.
 - hardware assumptions: smoke must run on CPU; Qwen/PassLLM experiments should use GPU if available.
@@ -114,5 +113,5 @@
 | 2026-06-15 | Progress ETA added | Resume-heavy CUDA generation should not estimate remaining time from already-reused rows | Progress markers now include `generated_rows_this_run`, `remaining_rows`, `seconds_per_generated_row`, `eta_seconds`, and `estimated_total_seconds`; `progress_eta_execute_smoke` verified the fields in the real generation log and report while keeping the completion gate unchanged |
 | 2026-06-15 | Recovery recommendations preserve seed | Copy-pasted recovery commands should not change the formal stochastic contract | `inspect_formal_status.py` now appends the manifest `--seed` to execute/resume/postprocess recommendations, and `render_formal_report.py` hardcoded formal-return recommendations include `--seed 42`; current formal and fusion reports both point back to seed-42 formal execution |
 | 2026-06-15 | CUDA handoff launcher added | Expanded child commands can bypass the formal runner's preflight, validation, report, and recovery gates if copied directly | `scripts/run_formal_passmoe.py` now writes `run_formal_cuda.ps1`, an explicit runner-based PowerShell entrypoint that reconstructs the formal command from the manifest, runs status/report after execution, and is recorded in `run_manifest.json` and `summary.md` |
-| 2026-06-15 | Canonical workspace migration hardened | The user moved PassMoE-related files under `D:\paper\passllm-moe`, so old absolute artifact paths must not be mistaken for current evidence | `scripts/inspect_formal_status.py` and `scripts/validate_formal_outputs.py` now audit manifest repo-owned paths against current root `D:\paper\passllm-moe\PassMoE`; current formal preflight/status/validation confirms the path audit passes, while the run remains incomplete until CUDA-generated JSONL and score artifacts exist |
+| 2026-06-15 | Canonical workspace migration hardened | The user moved PassMoE-related files under a new local workspace, so stale absolute artifact paths must not be mistaken for current evidence | `scripts/inspect_formal_status.py` and `scripts/validate_formal_outputs.py` now audit manifest repo-owned paths against the current repo root; current formal preflight/status/validation confirms the path audit passes, while the run remains incomplete until CUDA-generated JSONL and score artifacts exist |
 | 2026-06-15 | Method boundary clarified | FieldDrop is from a separate PassLLM lightweight-improvement paper and should not be conflated with PassMoE | README, CLI help, formal runner description, and checklist now state that `--base-adapter fielddrop` loads an external PassLLM/FieldDrop baseline/foundation adapter; PassMoE claims refer only to the revived router/expert training/generation/fusion layer |

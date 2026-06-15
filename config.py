@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -8,6 +9,21 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def env_or_path(env_name: str, default_path: Path) -> str:
+    """Resolve optional local assets without hard-coded machine paths."""
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    return str(default_path)
+
+
+def passllm_code_root() -> Path:
+    value = os.environ.get("PASSLLM_CODE_ROOT") or os.environ.get("PASSLLM_FIELDDROP_CODE_ROOT")
+    if value:
+        return Path(value)
+    return ROOT / "external" / "PassLLM-FieldDrop" / "code"
 
 
 LEET_DICTIONARY: Dict[str, List[str]] = {
@@ -90,19 +106,26 @@ class Config:
     dtype: str = "auto"
     use_device_map: bool = False
 
-    # Local assets discovered in D:\paper.
-    local_qwen_05b: str = (
-        r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\model\Qwen2.5-0.5B-Instruct"
+    # Local assets. Override these with environment variables when assets live
+    # outside the repository:
+    # PASSLLM_CODE_ROOT, PASSLLM_QWEN_MODEL, PASSLLM_FIELDDROP_ADAPTER,
+    # PASSLLM_BASELINE10K_ADAPTER, PASSLLM_CSDN_ADAPTER.
+    local_passllm_code: str = str(passllm_code_root())
+    local_qwen_05b: str = env_or_path(
+        "PASSLLM_QWEN_MODEL",
+        passllm_code_root() / "model" / "Qwen2.5-0.5B-Instruct",
     )
-    local_passllm_code: str = r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code"
-    local_fielddrop_adapter: str = (
-        r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints\fielddrop_500k_p04"
+    local_fielddrop_adapter: str = env_or_path(
+        "PASSLLM_FIELDDROP_ADAPTER",
+        passllm_code_root() / "checkpoints" / "fielddrop_500k_p04",
     )
-    local_baseline10k_adapter: str = (
-        r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints\baseline_clixsense_10k\final"
+    local_baseline10k_adapter: str = env_or_path(
+        "PASSLLM_BASELINE10K_ADAPTER",
+        passllm_code_root() / "checkpoints" / "baseline_clixsense_10k" / "final",
     )
-    local_csdn_adapter: str = (
-        r"D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints\126_csdn_disQwen0.5B"
+    local_csdn_adapter: str = env_or_path(
+        "PASSLLM_CSDN_ADAPTER",
+        passllm_code_root() / "checkpoints" / "126_csdn_disQwen0.5B",
     )
 
     def run_dir(self) -> Path:
