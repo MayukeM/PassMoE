@@ -59,7 +59,6 @@ class LowRankExpert(nn.Module):
         self.down = nn.Linear(hidden_dim, rank, bias=False)
         self.up = nn.Linear(rank, hidden_dim, bias=False)
         self.feature_proj = nn.Linear(3, hidden_dim)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
         self.dropout = nn.Dropout(dropout)
         self.scaling = 1.0 / math.sqrt(max(rank, 1))
         nn.init.normal_(self.down.weight, std=0.02)
@@ -83,8 +82,10 @@ class LowRankExpert(nn.Module):
         expert_hidden = expert_hidden * scale
 
         residual = self.up(F.gelu(self.down(self.dropout(expert_hidden)))) * self.scaling
-        adapted = self.layer_norm(hidden + residual)
-        return adapted
+        # Keep the fused foundation model exact at initialization. A fresh
+        # LayerNorm over frozen LM hidden states changes the output distribution
+        # even when the low-rank residual is still zero.
+        return hidden + residual
 
 
 class HybridGatingNetwork(nn.Module):

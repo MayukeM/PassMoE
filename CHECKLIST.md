@@ -92,7 +92,11 @@
 - [x] real local Qwen path with imported FieldDrop adapter verified end-to-end on CPU diagnostic: `artifacts/formal/qwen_fielddrop_tiny_execute_smoke/formal_validation.json` is `passed` and its report is `diagnostic_only`.
 - [x] auto-report execute smoke passed: `artifacts/formal/auto_report_execute_smoke/formal_result_report.json` is generated automatically and marked `diagnostic_only`.
 - [x] diagnostic runner support added: `--max-eval-samples` and explicit no-adapter aliases `none`, `null`, `-`.
-- [ ] CUDA formal neural comparison still needs to run: `.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1` from the repo root on a CUDA-enabled PyTorch host.
+- [x] first CUDA formal neural comparison completed on 500 eval rows and failed the effect gate: raw SR@100 `0.0240`, fused SR@100 `0.0400`, FieldDrop baseline SR@100 `0.0740`.
+- [x] implementation diagnosis found non-identity expert initialization: fresh expert LayerNorm changed frozen backbone hidden states even with zero low-rank residual.
+- [x] `LowRankExpert` now preserves the foundation path at initialization with `hidden + residual`; tiny identity check max logit difference is `0.0`.
+- [ ] run a CUDA pilot after the identity-preserving expert fix before spending another full 500-row formal pass.
+- [ ] rerun the full CUDA formal neural comparison only if the pilot shows raw SR recovering toward the FieldDrop/PassLLM baseline.
 
 ## Implementation
 
@@ -120,4 +124,5 @@
 ## Closeout For Current Pass
 
 - [x] smoke result summarized.
-- [x] next action is explicit: run the formal CUDA comparison and require `formal_validation.json` status `passed` before claiming PassMoE matches or exceeds PassLLM.
+- [x] failed formal CUDA result summarized honestly.
+- [x] next action is explicit: validate the identity-preserving expert fix with a CUDA pilot, then rerun the formal comparison only if the pilot is promising.
