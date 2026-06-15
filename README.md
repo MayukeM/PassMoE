@@ -150,6 +150,19 @@ CPU tiny diagnostic on 64 ClixSense records:
 | untrained router | 0.2813 | 0.2861 | 0.4127 | 0.3007 |
 | trained diagnostic | 1.0000 | 0.9779 | 0.9825 | 0.9236 |
 
+Qwen/FieldDrop CUDA mechanism diagnostic on 256 ClixSense records:
+
+| Route | Top-1 weak-label agreement | PII bucket avg PII expert | Entropy bucket avg entropy expert | Leet bucket avg leet expert |
+|---|---:|---:|---:|---:|
+| untrained Qwen router | 0.3008 | 0.3073 | 0.3251 | 0.3683 |
+| trained Qwen diagnostic | 1.0000 | 0.9806 | 0.9720 | 0.9832 |
+
+The untrained Qwen router collapsed to the leet expert for all 256 samples.
+After the explicit specialization diagnostic, PII, entropy, and leet buckets
+route to their intended experts with top-1 agreement `1.0000`. This remains
+mechanism evidence only: it is not an SR@K comparison, and FieldDrop remains an
+external PassLLM foundation adapter rather than a PassMoE component.
+
 Reproduce the diagnostic:
 
 ```bash
@@ -158,11 +171,20 @@ python main.py train --base-model tiny --task trawling --data-path data/clixsens
 python main.py analyze-specialization --checkpoint runs/tiny_router_specialization_priority_smoke/best.pt --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-samples 64 --batch-size 8 --device cpu --out artifacts/diagnostics/router_specialization_priority_smoke.json
 ```
 
+Qwen/FieldDrop CUDA diagnostic commands:
+
+```bash
+python scripts/analyze_expert_specialization.py --base-model local-qwen --base-adapter fielddrop --task targeted --prompt-template-id 0 --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-samples 256 --batch-size 8 --max-length 256 --lora-rank 8 --router-hidden-dim 32 --top-k-experts 1 --device cuda --dtype float16 --seed 42 --output-dir artifacts/diagnostics/expert_specialization --run-name qwen_fielddrop_router_specialization_cuda_256_init
+
+python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --prompt-template-id 0 --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-train-samples 256 --epochs 8 --batch-size 8 --learning-rate 0.005 --max-length 256 --generation-max-new-tokens 16 --lora-rank 8 --router-hidden-dim 32 --top-k-experts 1 --router-specialization-weight 10.0 --router-specialization-smoothing 0.02 --skip-generation --run-name qwen_fielddrop_router_specialization_cuda_256_train --device cuda --dtype float16 --seed 42
+
+python scripts/analyze_expert_specialization.py --checkpoint runs/qwen_fielddrop_router_specialization_cuda_256_train/best.pt --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-samples 256 --batch-size 8 --device cuda --dtype float16 --seed 42 --output-dir artifacts/diagnostics/expert_specialization --run-name qwen_fielddrop_router_specialization_cuda_256_trained
+```
+
 This is not an SR@K result and does not replace the validated formal run. It
 only shows that the router/expert path can learn an interpretable division of
-labor under an explicit, lightweight specialization objective. A Qwen/FieldDrop
-CUDA diagnostic is still required before using this as a paper-facing neural
-PassMoE claim.
+labor under an explicit, lightweight specialization objective. Any paper-facing
+performance claim still needs the formal SR@K validation path.
 
 ## Formal PassMoE Run
 

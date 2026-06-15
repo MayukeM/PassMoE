@@ -106,6 +106,7 @@
 - [x] default-off router specialization objective added, using batch-balanced PII-priority / leet-priority / entropy-fallback weak labels.
 - [x] `main.py analyze-specialization` and `scripts/analyze_expert_specialization.py` added for per-bucket expert routing diagnostics.
 - [x] tiny CPU expert-specialization diagnostic completed: untrained top-1 agreement `0.2813`; trained `tiny_router_specialization_priority_smoke` top-1 agreement `1.0000` on 64 records, with PII/entropy/leet buckets routed to their intended experts.
+- [x] Qwen/FieldDrop CUDA expert-specialization diagnostic completed on 256 records: untrained agreement `0.3008`, trained agreement `1.0000`; trained bucket weights are PII `0.9806`, entropy `0.9720`, leet `0.9832`.
 - [x] standalone formal helper defaults now point to `qwen_fielddrop_base_identity_clixsense_500_raw` instead of the historical trained-residual route.
 - [x] `validate_formal_outputs.py` now infers whether fused artifacts are required from `run_manifest.json`, so the current raw-only formal run validates with the default command.
 - [x] status, validation, report, and CUDA readiness tools now remap repo-owned manifest paths from an old repo root to the current checkout before checking hashes/provenance.
