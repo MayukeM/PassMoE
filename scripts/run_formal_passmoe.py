@@ -18,9 +18,9 @@ from typing import Any, Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATA_PATH = r"data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl"
-DEFAULT_TEST_DATA_PATH = r"data\clixsense\clixsense_test_500_from_fd500k_p00.json"
-DEFAULT_BASELINE_CONTRACT = r"baselines\imported\passllm-fielddrop\json\metric_contract.json"
+DEFAULT_DATA_PATH = "data/clixsense/clixsense_train_50_no_fd500k_targets.jsonl"
+DEFAULT_TEST_DATA_PATH = "data/clixsense/clixsense_test_500_from_fd500k_p00.json"
+DEFAULT_BASELINE_CONTRACT = "baselines/imported/passllm-fielddrop/json/metric_contract.json"
 COMMAND_LOG_DIR: Path | None = None
 COMMAND_LOG_INDEX = 0
 
@@ -1835,10 +1835,21 @@ def count_data_records(path: Path) -> int:
 
 
 def resolve_repo_path(path: str) -> Path:
+    path = normalize_cli_path(path)
     candidate = Path(path)
     if candidate.is_absolute():
         return candidate
     return (REPO_ROOT / candidate).resolve()
+
+
+def normalize_cli_path(path: str) -> str:
+    if os.sep == "/" and "\\" in path and not looks_like_windows_absolute_path(path):
+        return path.replace("\\", "/")
+    return path
+
+
+def looks_like_windows_absolute_path(path: str) -> bool:
+    return len(path) >= 3 and path[1] == ":" and path[2] in {"\\", "/"}
 
 
 def load_json(path: Path) -> dict[str, Any]:

@@ -309,7 +309,7 @@ def safe_int(value: Any) -> int:
 
 
 def trainable_state_dict(model: PassMoE) -> dict[str, torch.Tensor]:
-    named_params = dict(model.named_parameters(remove_duplicate=False))
+    named_params = dict(named_parameters_compat(model))
     state = {}
     for name, tensor in model.state_dict().items():
         param = named_params.get(name)
@@ -319,7 +319,14 @@ def trainable_state_dict(model: PassMoE) -> dict[str, torch.Tensor]:
 
 
 def trainable_parameter_names(model: PassMoE) -> list[str]:
-    return [name for name, param in model.named_parameters(remove_duplicate=False) if param.requires_grad]
+    return [name for name, param in named_parameters_compat(model) if param.requires_grad]
+
+
+def named_parameters_compat(model: PassMoE) -> list[tuple[str, torch.nn.Parameter]]:
+    try:
+        return list(model.named_parameters(remove_duplicate=False))
+    except TypeError:
+        return list(model.named_parameters())
 
 
 def optimizer_state_to_cpu(state: dict[str, Any]) -> dict[str, Any]:
