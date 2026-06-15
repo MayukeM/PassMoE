@@ -1,0 +1,31 @@
+# Runtime artifacts and generated outputs
+artifacts/
+runs/
+logs/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local datasets and model/checkpoint material
+data/
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Editor and OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+

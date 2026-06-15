@@ -1,484 +1,512 @@
-# 模型架构模块
+from __future__ import annotations
+
+import math
+import json
+from pathlib import Path
+from typing import Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import re
-import math
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-class LoRALayer(nn.Module):
-    """低秩适配层，用于参数高效微调"""
-    def __init__(self, in_features, out_features, rank=32, alpha=32):
+from config import Config, LEET_DICTIONARY, dtype_from_string
+from data import CharPasswordTokenizer
+
+
+class TinyCausalBackbone(nn.Module):
+    """CPU-friendly causal LM backbone used to verify the PassMoE pipeline."""
+
+    def __init__(self, vocab_size: int, hidden_dim: int, num_layers: int, num_heads: int, dropout: float):
         super().__init__()
-        self.rank = rank
-        self.alpha = alpha
-        self.scaling = alpha / rank
-        
-        self.W_a = nn.Linear(in_features, rank, bias=False)
-        self.W_b = nn.Linear(rank, out_features, bias=False)
-        
-        # 初始化权重
-        nn.init.normal_(self.W_a.weight, std=0.02)
-        nn.init.zeros_(self.W_b.weight)
-        
-    def forward(self, x):
-        x = self.W_a(x)
-        x = self.W_b(x)
-        return x * self.scaling
+        self.embedding = nn.Embedding(vocab_size, hidden_dim)
+        self.position = nn.Embedding(512, hidden_dim)
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+        self.ln = nn.LayerNorm(hidden_dim)
+
+    def forward_hidden(self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+        batch_size, seq_len = input_ids.shape
+        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
+        hidden = self.embedding(input_ids) + self.position(positions)
+        causal_mask = torch.triu(
+            torch.ones(seq_len, seq_len, dtype=torch.bool, device=input_ids.device),
+            diagonal=1,
+        )
+        padding_mask = attention_mask == 0 if attention_mask is not None else None
+        hidden = self.encoder(hidden, mask=causal_mask, src_key_padding_mask=padding_mask)
+        return self.ln(hidden)
 
 
-class PIIExpert(nn.Module):
-    """PII语义专家：处理PII衍生密码"""
-    def __init__(self, base_model, hidden_dim=1024, rank=32):
+class LowRankExpert(nn.Module):
+    """Low-rank expert adapter over shared hidden states."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        rank: int,
+        dropout: float,
+        expert_id: int = 0,
+    ):
         super().__init__()
-        self.base_model = base_model
-        self.config = base_model.config
-        
-        # 添加BiLSTM层处理结构化PII
-        self.bilstm = nn.LSTM(
-            input_size=self.config.hidden_size,
-            hidden_size=hidden_dim // 2,
-            num_layers=2,
-            bidirectional=True,
-            batch_first=True
-        )
-        
-        # 贝叶斯先验层
-        self.bayesian_prior = nn.Linear(hidden_dim, self.config.vocab_size)
-        
-        # LoRA适配层
-        self.lora = LoRALayer(
-            in_features=self.config.hidden_size,
-            out_features=self.config.hidden_size,
-            rank=rank
-        )
-        
-    def forward(self, input_ids, attention_mask, features=None):
-        # 获取基础模型输出
-        outputs = self.base_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True
-        )
-        hidden_states = outputs.hidden_states[-1]  # 最后一层的隐藏状态
-        
-        # 应用LoRA
-        lora_output = self.lora(hidden_states)
-        hidden_states = hidden_states + lora_output
-        
-        # BiLSTM处理
-        lstm_out, _ = self.bilstm(hidden_states)
-        
-        # 贝叶斯先验层
-        logits = self.bayesian_prior(lstm_out)
-        
-        return logits
+        self.expert_id = expert_id
+        self.down = nn.Linear(hidden_dim, rank, bias=False)
+        self.up = nn.Linear(rank, hidden_dim, bias=False)
+        self.feature_proj = nn.Linear(3, hidden_dim)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.scaling = 1.0 / math.sqrt(max(rank, 1))
+        nn.init.normal_(self.down.weight, std=0.02)
+        nn.init.zeros_(self.up.weight)
+
+    def forward(self, hidden: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        expert_dtype = self.down.weight.dtype
+        hidden = hidden.to(dtype=expert_dtype)
+        features = features.to(dtype=expert_dtype)
+        feature_bias = self.feature_proj(features).unsqueeze(1)
+        expert_hidden = hidden + 0.1 * feature_bias
+
+        # Paper-inspired specialization. The signal is deliberately small so the
+        # shared language model remains the main generator.
+        if self.expert_id == 0:  # PII expert
+            scale = 1.0 + features[:, 0].view(-1, 1, 1)
+        elif self.expert_id == 1:  # high-entropy expert
+            scale = 1.0 + features[:, 2].view(-1, 1, 1)
+        else:  # leetspeak / morphology expert
+            scale = 1.0 + features[:, 1].view(-1, 1, 1)
+        expert_hidden = expert_hidden * scale
+
+        residual = self.up(F.gelu(self.down(self.dropout(expert_hidden)))) * self.scaling
+        adapted = self.layer_norm(hidden + residual)
+        return adapted
 
 
-class HighEntropyExpert(nn.Module):
-    """高熵专家：生成高熵随机密码"""
-    def __init__(self, base_model, rank=32):
+class HybridGatingNetwork(nn.Module):
+    """CNN-GRU router over [PII score, leet score, entropy]."""
+
+    def __init__(self, hidden_dim: int = 64, num_experts: int = 3):
         super().__init__()
-        self.base_model = base_model
-        self.config = base_model.config
-        
-        # LoRA适配层
-        self.lora = LoRALayer(
-            in_features=self.config.hidden_size,
-            out_features=self.config.hidden_size,
-            rank=rank
-        )
-        
-        # 变分dropout层
-        self.dropout = nn.Dropout(0.3)
-        
-        # 输出层
-        self.output_layer = nn.Linear(self.config.hidden_size, self.config.vocab_size)
-        
-    def forward(self, input_ids, attention_mask, features=None):
-        # 获取基础模型输出
-        outputs = self.base_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True
-        )
-        hidden_states = outputs.hidden_states[-1]
-        
-        # 应用LoRA
-        lora_output = self.lora(hidden_states)
-        hidden_states = hidden_states + lora_output
-        
-        # 应用变分dropout增加随机性
-        hidden_states = self.dropout(hidden_states)
-        
-        # 输出层
-        logits = self.output_layer(hidden_states)
-        
-        # 如果提供了特征，应用熵自适应调整
-        if features is not None:
-            entropy = features[:, 2].unsqueeze(1).unsqueeze(2)  # [batch_size, 1, 1]
-            # 基于熵调整logits，增加高熵区域的随机性
-            scale = 1.0 + 0.5 * entropy  # 熵越高，缩放越大
-            logits = logits * scale
-        
-        return logits
-
-
-class LeetSpeakExpert(nn.Module):
-    """词形转换专家：处理Leetspeak等转换密码"""
-    def __init__(self, base_model, leet_dictionary, rank=32):
-        super().__init__()
-        self.base_model = base_model
-        self.config = base_model.config
-        self.leet_dictionary = leet_dictionary
-        self.tokenizer = None  # 稍后设置
-        
-        # LoRA适配层
-        self.lora = LoRALayer(
-            in_features=self.config.hidden_size,
-            out_features=self.config.hidden_size,
-            rank=rank
-        )
-        
-        # 输出层
-        self.output_layer = nn.Linear(self.config.hidden_size, self.config.vocab_size)
-        
-    def forward(self, input_ids, attention_mask, features=None):
-        # 获取基础模型输出
-        outputs = self.base_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True
-        )
-        hidden_states = outputs.hidden_states[-1]
-        
-        # 应用LoRA
-        lora_output = self.lora(hidden_states)
-        hidden_states = hidden_states + lora_output
-        
-        # 输出层
-        logits = self.output_layer(hidden_states)
-        
-        return logits
-    
-    def leet_similarity_loss(self, generated_ids, target_ids):
-        """计算与Leetspeak的相似度损失"""
-        if self.tokenizer is None:
-            raise ValueError("Tokenizer not set for LeetSpeakExpert")
-            
-        batch_size, seq_len = generated_ids.shape
-        loss = 0.0
-        
-        for i in range(batch_size):
-            generated = self.tokenizer.decode(generated_ids[i], skip_special_tokens=True)
-            target = self.tokenizer.decode(target_ids[i], skip_special_tokens=True)
-            
-            # 计算Levenshtein距离
-            lev_dist = self._levenshtein_distance(generated, target)
-            loss += lev_dist / max(len(generated), len(target), 1)
-            
-        return loss / batch_size
-    
-    def _levenshtein_distance(self, s1, s2):
-        """计算两个字符串之间的Levenshtein距离"""
-        if len(s1) < len(s2):
-            return self._levenshtein_distance(s2, s1)
-        
-        # len(s1) >= len(s2)
-        if len(s2) == 0:
-            return len(s1)
-        
-        previous_row = range(len(s2) + 1)
-        for i, c1 in enumerate(s1):
-            current_row = [i + 1]
-            for j, c2 in enumerate(s2):
-                insertions = previous_row[j + 1] + 1
-                deletions = current_row[j] + 1
-                substitutions = previous_row[j] + (c1 != c2)
-                current_row.append(min(insertions, deletions, substitutions))
-            previous_row = current_row
-            
-        return previous_row[-1]
-
-
-class GatingNetwork(nn.Module):
-    """语义感知门控网络，用于动态选择专家"""
-    def __init__(self, input_dim=3, hidden_dim=64, num_experts=3):
-        super().__init__()
-        # 混合CNN-GRU架构
         self.cnn = nn.Sequential(
-            nn.Conv1d(in_channels=input_dim, out_channels=hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU()
+            nn.Conv1d(1, hidden_dim, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+            nn.GELU(),
         )
-        
-        self.gru = nn.GRU(
-            input_size=hidden_dim,
-            hidden_size=hidden_dim,
-            num_layers=1,
-            batch_first=True
-        )
-        
+        self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
         self.fc = nn.Linear(hidden_dim, num_experts)
-        self.softmax = nn.Softmax(dim=-1)
-        
-    def forward(self, features):
-        # 特征形状: [batch_size, input_dim]
-        # 调整形状适应CNN: [batch_size, input_dim, 1]
-        x = features.unsqueeze(2)
-        
-        # CNN处理
-        x = self.cnn(x)  # [batch_size, hidden_dim, 1]
-        x = x.squeeze(2)  # [batch_size, hidden_dim]
-        
-        # GRU处理
-        x = x.unsqueeze(1)  # [batch_size, 1, hidden_dim]
-        x, _ = self.gru(x)
-        x = x.squeeze(1)  # [batch_size, hidden_dim]
-        
-        # 输出专家权重
-        logits = self.fc(x)
-        weights = self.softmax(logits)
-        
-        return weights
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        x = features.unsqueeze(1)
+        x = self.cnn(x).transpose(1, 2)
+        _, hidden = self.gru(x)
+        return F.softmax(self.fc(hidden[-1]), dim=-1)
 
 
-class PassMoEP(nn.Module):
-    """完整的PassMoE-P模型"""
-    def __init__(self, base_model_name, leet_dictionary, config):
+class PassMoE(nn.Module):
+    """Revived PassMoE-P with one shared backbone and three routed experts."""
+
+    def __init__(
+        self,
+        config: Config,
+        vocab_size: int,
+        hidden_dim: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        backbone: nn.Module,
+        shared_lm_head: nn.Module | None = None,
+    ):
         super().__init__()
-        # 加载基础模型和分词器
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-        self.base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_name,
-            torch_dtype=torch.float16,
-            device_map="auto"
-        )
-        
-        # 配置参数
         self.config = config
-        
-        # 冻结基础模型参数
-        for param in self.base_model.parameters():
-            param.requires_grad = False
-        
-        # 创建三个专家
-        self.experts = nn.ModuleList([
-            PIIExpert(self.base_model, hidden_dim=config.HIDDEN_DIM, rank=config.LORA_RANK),
-            HighEntropyExpert(self.base_model, rank=config.LORA_RANK),
-            LeetSpeakExpert(self.base_model, leet_dictionary, rank=config.LORA_RANK)
-        ])
-        
-        # 设置LeetSpeakExpert的tokenizer
-        self.experts[2].tokenizer = self.tokenizer
-        
-        # 创建门控网络
-        self.gating_network = GatingNetwork()
-        
-        # Leetspeak字典
-        self.leet_dictionary = leet_dictionary
-        
-        # 梯度隔离掩码
-        self.gradient_mask = None
-        
-    def set_gradient_mask(self, mask):
-        """设置梯度隔离掩码，控制哪些专家的梯度会被更新"""
-        self.gradient_mask = mask
-        
-    def forward(self, input_ids, attention_mask, labels, features):
-        # 获取专家权重 [batch_size, 3]
-        expert_weights = self.gating_network(features)
-        
-        # 选择Top-2专家
-        top2_weights, top2_indices = torch.topk(expert_weights, k=2, dim=1)
-        
-        # 归一化权重
-        top2_weights = F.softmax(top2_weights, dim=1)
-        
-        # 计算每个专家的输出
-        expert_logits = []
-        for i, expert in enumerate(self.experts):
-            logits = expert(input_ids, attention_mask, features)
-            expert_logits.append(logits)
-        
-        # 计算加权输出
-        batch_size = input_ids.size(0)
-        final_logits = torch.zeros_like(expert_logits[0])
-        
-        for i in range(batch_size):
-            # 获取当前样本的Top-2专家索引和权重
-            idx1, idx2 = top2_indices[i]
-            w1, w2 = top2_weights[i]
-            
-            # 加权组合
-            final_logits[i] = w1 * expert_logits[idx1][i] + w2 * expert_logits[idx2][i]
-        
-        # 计算交叉熵损失
-        shift_logits = final_logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        
-        loss_fct = nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
-        ce_loss = loss_fct(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1)
+        self.vocab_size = vocab_size
+        self.hidden_dim = hidden_dim
+        self.pad_token_id = pad_token_id
+        self.eos_token_id = eos_token_id
+        self.backbone = backbone
+        self.router = HybridGatingNetwork(config.router_hidden_dim, num_experts=3)
+        self.lm_head = shared_lm_head or nn.Linear(hidden_dim, vocab_size, bias=False)
+        self.experts = nn.ModuleList(
+            [
+                LowRankExpert(hidden_dim, config.lora_rank, config.dropout, 0),
+                LowRankExpert(hidden_dim, config.lora_rank, config.dropout, 1),
+                LowRankExpert(hidden_dim, config.lora_rank, config.dropout, 2),
+            ]
         )
-        
-        # 为词形转换专家添加Levenshtein损失
-        leet_loss = 0.0
-        
-        # 获取生成的token（取logits最大的）
-        generated_ids = torch.argmax(final_logits, dim=-1)
-        
-        # 只为激活了词形转换专家的样本计算额外损失
-        leet_expert_idx = 2
-        leet_mask = (top2_indices == leet_expert_idx).any(dim=1)
-        
-        if leet_mask.any() and self.config.LEET_LOSS_LAMBDA > 0:
-            leet_samples = generated_ids[leet_mask]
-            leet_targets = labels[leet_mask]
-            leet_loss = self.experts[leet_expert_idx].leet_similarity_loss(leet_samples, leet_targets)
-            leet_loss = self.config.LEET_LOSS_LAMBDA * leet_loss
-        
-        # 总损失
-        total_loss = ce_loss + leet_loss
-        
-        # 梯度隔离：只更新被选中专家的梯度
-        if self.training and self.gradient_mask is not None:
-            for i, expert in enumerate(self.experts):
-                for param in expert.parameters():
-                    if param.grad is not None and not self.gradient_mask[i]:
-                        param.grad = None
-        
-        return {
-            "loss": total_loss,
-            "logits": final_logits,
-            "expert_weights": expert_weights
-        }
-    
-    def generate_passwords(self, prefix="", num_passwords=10):
-        """生成密码的函数"""
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        features: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        if features is None:
+            features = torch.zeros(input_ids.size(0), 3, dtype=torch.float32, device=input_ids.device)
+
+        hidden = self._forward_hidden(input_ids, attention_mask)
+        expert_hidden = torch.stack([expert(hidden, features) for expert in self.experts], dim=1)
+        expert_weights = self.router(features)
+        routed_weights = self._topk_weights(expert_weights)
+        routed_weights = routed_weights.to(dtype=expert_hidden.dtype)
+        mixed_hidden = torch.einsum("be,beth->bth", routed_weights, expert_hidden)
+        lm_dtype = module_weight_dtype(self.lm_head, mixed_hidden.dtype)
+        logits = self.lm_head(mixed_hidden.to(dtype=lm_dtype))
+
+        output = {"logits": logits, "expert_weights": expert_weights, "routed_weights": routed_weights}
+        if labels is not None:
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
+            valid_tokens = shift_labels.ne(-100).sum()
+            if int(valid_tokens.detach().cpu()) == 0:
+                loss = shift_logits.sum() * 0.0
+            else:
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    ignore_index=-100,
+                )
+            output["loss"] = loss
+            output["valid_tokens"] = valid_tokens
+        return output
+
+    def _forward_hidden(self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None) -> torch.Tensor:
+        if hasattr(self.backbone, "forward_hidden"):
+            return self.backbone.forward_hidden(input_ids, attention_mask)
+
+        outputs = self.backbone(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        return outputs.hidden_states[-1]
+
+    def _topk_weights(self, weights: torch.Tensor) -> torch.Tensor:
+        k = min(self.config.top_k_experts, weights.size(-1))
+        values, indices = torch.topk(weights, k=k, dim=-1)
+        sparse = torch.zeros_like(weights)
+        sparse.scatter_(1, indices, values)
+        return sparse / sparse.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+    @torch.no_grad()
+    def generate_passwords(
+        self,
+        tokenizer: Any,
+        prefix: str = "",
+        num_passwords: int | None = None,
+        max_length: int | None = None,
+        beam_width: int | None = None,
+        temperature: float | None = None,
+        device: str | torch.device | None = None,
+        strip_prefix: bool = False,
+        pii: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float]]:
         self.eval()
-        
-        # 编码前缀
-        input_ids = self.tokenizer(
-            prefix,
-            return_tensors="pt",
-            add_special_tokens=False
-        ).input_ids.to(self.base_model.device)
-        
-        # 提取前缀特征
-        features = self._extract_features(prefix)
-        features = torch.tensor([features], dtype=torch.float32).to(self.base_model.device)
-        
-        generated_passwords = []
-        queue = [(input_ids, 1.0)]  # (当前序列, 累积概率)
-        
-        with torch.no_grad():
-            while queue and len(generated_passwords) < num_passwords:
-                current_ids, current_prob = queue.pop(0)
-                
-                # 如果达到最大长度，跳过
-                if current_ids.size(1) >= self.config.MAX_LENGTH:
+        num_passwords = num_passwords or self.config.num_passwords
+        max_length = max_length or self.config.generation_max_new_tokens
+        beam_width = beam_width or self.config.beam_width
+        temperature = temperature or self.config.temperature
+        generation_batch_size = max(1, int(getattr(self.config, "generation_batch_size", beam_width) or beam_width))
+        device = torch.device(device or next(self.parameters()).device)
+
+        start_ids = encode_prefix(tokenizer, prefix, device)
+        prompt_token_length = int(start_ids.size(1))
+        beams = [(start_ids, 0.0, False)]
+        completed: dict[str, tuple[list[int], float]] = {}
+
+        for _ in range(max_length):
+            candidates: list[tuple[torch.Tensor, float, bool]] = []
+            active = [beam for beam in beams if not beam[2]]
+            if not active:
+                break
+
+            for offset in range(0, len(active), generation_batch_size):
+                chunk = active[offset : offset + generation_batch_size]
+                input_ids = torch.cat([ids for ids, _score, _finished in chunk], dim=0)
+                attention = torch.ones_like(input_ids, device=device)
+                features = torch.tensor(
+                    [
+                        feature_vector_for_text(
+                            decode_candidate_text(tokenizer, ids[0].tolist(), prompt_token_length, prefix, strip_prefix),
+                            pii,
+                        )
+                        for ids, _score, _finished in chunk
+                    ],
+                    dtype=torch.float32,
+                    device=device,
+                )
+                outputs = self(input_ids=input_ids, attention_mask=attention, features=features)
+                logits = outputs["logits"][:, -1, :] / max(temperature, 1e-6)
+                logits = suppress_invalid_tokens(tokenizer, logits)
+                probs = F.softmax(logits, dim=-1)
+                top_probs, top_ids = torch.topk(probs, k=min(beam_width, probs.size(-1)), dim=-1)
+
+                for row, (ids, score, _finished) in enumerate(chunk):
+                    for prob, token_id in zip(top_probs[row], top_ids[row]):
+                        token = int(token_id.item())
+                        new_score = score + math.log(max(float(prob.item()), 1e-12))
+                        new_ids = torch.cat([ids, token_id.view(1, 1)], dim=1)
+                        if token == self.eos_token_id:
+                            decoded = decode_candidate_text(tokenizer, new_ids[0].tolist(), prompt_token_length, prefix, strip_prefix)
+                            if len(decoded) >= self.config.min_password_length:
+                                current = completed.get(decoded)
+                                if current is None or new_score > current[1]:
+                                    completed[decoded] = (new_ids[0].tolist(), new_score)
+                        else:
+                            candidates.append((new_ids, new_score, False))
+
+            candidates.sort(key=lambda item: item[1], reverse=True)
+            beams = candidates[:beam_width]
+            if len(completed) >= num_passwords and beams:
+                best_active = beams[0][1]
+                completed_ranked = sorted(completed.values(), key=lambda item: item[1], reverse=True)
+                if completed_ranked[num_passwords - 1][1] >= best_active:
+                    break
+
+        if len(completed) < num_passwords:
+            for ids, score, _ in beams:
+                password = decode_candidate_text(tokenizer, ids[0].tolist(), prompt_token_length, prefix, strip_prefix)
+                if not password:
                     continue
-                
-                # 获取当前特征
-                current_text = self.tokenizer.decode(current_ids[0], skip_special_tokens=True)
-                current_features = self._extract_features(current_text)
-                current_features = torch.tensor([current_features], dtype=torch.float32).to(self.base_model.device)
-                
-                # 获取专家权重
-                expert_weights = self.gating_network(current_features)
-                top2_weights, top2_indices = torch.topk(expert_weights, k=2, dim=1)
-                top2_weights = F.softmax(top2_weights, dim=1)
-                
-                # 获取专家输出
-                logits = []
-                for idx in top2_indices[0]:
-                    expert_logits = self.experts[idx](current_ids, torch.ones_like(current_ids), current_features)
-                    logits.append(expert_logits)
-                
-                # 加权组合logits
-                combined_logits = top2_weights[0, 0] * logits[0] + top2_weights[0, 1] * logits[1]
-                
-                # 最后一个token的logits
-                next_token_logits = combined_logits[:, -1, :] / self.config.TEMPERATURE
-                
-                # 应用softmax
-                next_token_probs = F.softmax(next_token_logits, dim=-1)
-                
-                # 采样多个候选token
-                top_probs, top_indices = torch.topk(next_token_probs, self.config.NUM_CANDIDATES)
-                
-                for i in range(self.config.NUM_CANDIDATES):
-                    token_id = top_indices[0, i].unsqueeze(0).unsqueeze(0)
-                    token_prob = top_probs[0, i].item()
-                    new_prob = current_prob * token_prob
-                    
-                    # 拼接新token
-                    new_ids = torch.cat([current_ids, token_id], dim=1)
-                    
-                    # 检查是否是结束符
-                    if token_id == self.tokenizer.eos_token_id:
-                        password = self.tokenizer.decode(new_ids[0], skip_special_tokens=True)
-                        if new_prob > self.config.TAU:  # 概率阈值筛选
-                            generated_passwords.append((password, new_prob))
-                    else:
-                        if new_prob > self.config.TAU / 10:  # 放宽前缀的概率阈值
-                            queue.append((new_ids, new_prob))
-                
-                # 对队列按概率排序，优先处理高概率序列
-                queue.sort(key=lambda x: x[1], reverse=True)
-        
-        # 去重并按概率排序
-        unique_passwords = {}
-        for pwd, prob in generated_passwords:
-            if pwd not in unique_passwords or prob > unique_passwords[pwd]:
-                unique_passwords[pwd] = prob
-        
-        # 转换为列表并排序
-        result = sorted(unique_passwords.items(), key=lambda x: x[1], reverse=True)
-        return [pwd for pwd, _ in result[:num_passwords]]
-    
-    def _extract_features(self, text):
-        """提取文本特征，与数据集的方法一致"""
-        pii_score = self._detect_pii(text)
-        leet_score = self._detect_leetspeak(text)
-        entropy = self._calculate_entropy(text)
-        return [pii_score, leet_score, entropy]
-    
-    def _detect_pii(self, text):
-        year_patterns = [r'\b19\d{2}\b', r'\b20\d{2}\b']
-        name_fragments = ['john', 'mary', 'zhang', 'li', 'wang']
-        
-        score = 0.0
-        for pattern in year_patterns:
-            if re.search(pattern, text):
-                score += 0.3
-                
-        for fragment in name_fragments:
-            if fragment in text.lower():
-                score += 0.3
-                
-        return min(score, 1.0)
-    
-    def _detect_leetspeak(self, text):
-        leet_chars = set()
-        for mappings in self.leet_dictionary.values():
-            leet_chars.update(mappings)
-            
-        count = 0
-        for char in text:
-            if char in leet_chars:
-                count += 1
-                
-        return min(count / max(len(text), 1), 1.0)
-    
-    def _calculate_entropy(self, text):
-        if not text:
-            return 0.0
-        
-        prob = [float(text.count(c)) / len(text) for c in set(text)]
-        entropy = -sum(p * math.log2(p) for p in prob) if prob else 0.0
-        return min(entropy / 8.0, 1.0)
-    
+                current = completed.get(password)
+                if current is None or score > current[1]:
+                    completed[password] = (ids[0].tolist(), score)
+                if len(completed) >= num_passwords:
+                    break
+
+        seen: dict[str, float] = {}
+        for ids, score in completed.values():
+            password = decode_candidate_text(tokenizer, ids, prompt_token_length, prefix, strip_prefix)
+            if not password:
+                continue
+            prob = math.exp(min(score, 0.0))
+            if password not in seen or prob > seen[password]:
+                seen[password] = prob
+
+        ranked = sorted(seen.items(), key=lambda item: item[1], reverse=True)
+        return ranked[:num_passwords]
+
+
+def build_model_and_tokenizer(config: Config) -> tuple[PassMoE, Any]:
+    if config.base_model.lower() == "tiny":
+        tokenizer = build_tokenizer(config)
+        backbone = TinyCausalBackbone(
+            vocab_size=tokenizer.vocab_size,
+            hidden_dim=config.hidden_dim,
+            num_layers=config.tiny_layers,
+            num_heads=config.tiny_heads,
+            dropout=config.dropout,
+        )
+        lm_head = nn.Linear(config.hidden_dim, tokenizer.vocab_size, bias=False)
+        model = PassMoE(
+            config=config,
+            vocab_size=tokenizer.vocab_size,
+            hidden_dim=config.hidden_dim,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            backbone=backbone,
+            shared_lm_head=lm_head,
+        )
+        model.merge_report = {}
+        return model, tokenizer
+
+    tokenizer = build_tokenizer(config)
+
+    from transformers import AutoModelForCausalLM
+
+    model_path = Path(config.base_model)
+    local_only = model_path.exists()
+    dtype = dtype_from_string(config.dtype)
+    hf_kwargs = {"dtype": dtype, "local_files_only": local_only}
+    if config.use_device_map and torch.cuda.is_available() and str(config.device).startswith("cuda"):
+        hf_kwargs["device_map"] = "auto"
+
+    try:
+        backbone = AutoModelForCausalLM.from_pretrained(config.base_model, **hf_kwargs)
+    except TypeError as exc:
+        if "dtype" not in str(exc):
+            raise
+        hf_kwargs["torch_dtype"] = hf_kwargs.pop("dtype")
+        backbone = AutoModelForCausalLM.from_pretrained(config.base_model, **hf_kwargs)
+    merge_report: dict[str, Any] = {}
+    if config.base_adapter:
+        merge_report = merge_lora_adapter(backbone, Path(config.base_adapter))
+        print(f"Merged frozen LoRA adapter: {merge_report}")
+
+    for param in backbone.parameters():
+        param.requires_grad = False
+
+    hidden_dim = int(backbone.config.hidden_size)
+    vocab_size = int(backbone.config.vocab_size)
+    shared_lm_head = backbone.get_output_embeddings()
+    if shared_lm_head is not None:
+        for param in shared_lm_head.parameters():
+            param.requires_grad = False
+
+    model = PassMoE(
+        config=config,
+        vocab_size=vocab_size,
+        hidden_dim=hidden_dim,
+        pad_token_id=tokenizer.pad_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        backbone=backbone,
+        shared_lm_head=shared_lm_head,
+    )
+    model.merge_report = merge_report
+    return model, tokenizer
+
+
+def build_tokenizer(config: Config) -> Any:
+    if config.base_model.lower() == "tiny":
+        return CharPasswordTokenizer(config.tiny_vocab)
+
+    from transformers import AutoTokenizer
+
+    model_path = Path(config.base_model)
+    local_only = model_path.exists()
+    tokenizer = AutoTokenizer.from_pretrained(config.base_model, local_files_only=local_only)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def merge_lora_adapter(backbone: nn.Module, adapter_dir: Path) -> dict[str, Any]:
+    """Merge a PEFT LoRA adapter into the frozen HF backbone without peft."""
+
+    adapter_dir = adapter_dir.resolve()
+    config_path = adapter_dir / "adapter_config.json"
+    weight_path = adapter_dir / "adapter_model.safetensors"
+    if not config_path.exists():
+        raise FileNotFoundError(f"adapter_config.json not found: {config_path}")
+    if not weight_path.exists():
+        raise FileNotFoundError(f"adapter_model.safetensors not found: {weight_path}")
+
+    from safetensors.torch import load_file
+
+    adapter_config = json.loads(config_path.read_text(encoding="utf-8"))
+    rank = int(adapter_config.get("r", 1))
+    alpha = float(adapter_config.get("lora_alpha", rank))
+    scaling = alpha / max(rank, 1)
+    tensors = load_file(str(weight_path))
+
+    pairs: dict[str, dict[str, torch.Tensor]] = {}
+    for name, tensor in tensors.items():
+        if not name.endswith((".lora_A.weight", ".lora_B.weight")):
+            continue
+        base_name, suffix = name.rsplit(".lora_", 1)
+        module_name = normalize_adapter_module_name(base_name)
+        slot = "A" if suffix.startswith("A") else "B"
+        pairs.setdefault(module_name, {})[slot] = tensor
+
+    merged = 0
+    skipped: list[str] = []
+    with torch.no_grad():
+        for module_name, pair in sorted(pairs.items()):
+            if "A" not in pair or "B" not in pair:
+                skipped.append(module_name)
+                continue
+            try:
+                target = backbone.get_submodule(module_name)
+            except AttributeError:
+                skipped.append(module_name)
+                continue
+            if not hasattr(target, "weight"):
+                skipped.append(module_name)
+                continue
+            weight = target.weight
+            delta = (pair["B"].to(torch.float32) @ pair["A"].to(torch.float32)) * scaling
+            if tuple(delta.shape) != tuple(weight.shape):
+                skipped.append(module_name)
+                continue
+            weight.add_(delta.to(device=weight.device, dtype=weight.dtype))
+            merged += 1
+
+    return {
+        "adapter_dir": str(adapter_dir),
+        "merged_modules": merged,
+        "skipped_modules": len(skipped),
+        "skipped_preview": skipped[:5],
+    }
+
+
+def normalize_adapter_module_name(name: str) -> str:
+    prefixes = (
+        "base_model.model.",
+        "base_model.",
+    )
+    for prefix in prefixes:
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
+
+
+def encode_prefix(tokenizer: Any, prefix: str, device: torch.device) -> torch.Tensor:
+    if isinstance(tokenizer, CharPasswordTokenizer):
+        ids = [tokenizer.bos_token_id]
+        ids.extend(tokenizer.token_to_id.get(ch, tokenizer.unk_token_id) for ch in prefix)
+        return torch.tensor([ids], dtype=torch.long, device=device)
+    encoded = tokenizer(prefix, return_tensors="pt", add_special_tokens=True)
+    return encoded["input_ids"].to(device)
+
+
+def suppress_invalid_tokens(tokenizer: Any, logits: torch.Tensor) -> torch.Tensor:
+    blocked = []
+    for name in ("pad_token_id", "bos_token_id", "unk_token_id"):
+        token_id = getattr(tokenizer, name, None)
+        if token_id is not None:
+            blocked.append(int(token_id))
+    if blocked:
+        logits[:, blocked] = -float("inf")
+    return logits
+
+
+def decode_for_features(tokenizer: Any, ids: list[int]) -> str:
+    return tokenizer.decode(ids, skip_special_tokens=True)
+
+
+def strip_decoded_prefix(text: str, prefix: str, enabled: bool) -> str:
+    if enabled and prefix and text.startswith(prefix):
+        return text[len(prefix) :]
+    return text
+
+
+def decode_candidate_text(
+    tokenizer: Any,
+    ids: list[int],
+    prompt_token_length: int,
+    prefix: str,
+    strip_prefix: bool,
+) -> str:
+    if strip_prefix:
+        suffix_ids = ids[prompt_token_length:]
+        decoded = decode_for_features(tokenizer, suffix_ids)
+        if decoded or not prefix:
+            return decoded
+    return strip_decoded_prefix(decode_for_features(tokenizer, ids), prefix, strip_prefix)
+
+
+def feature_vector_for_text(text: str, pii: dict[str, Any] | None = None) -> list[float]:
+    from data import FeatureExtractor
+
+    return FeatureExtractor(LEET_DICTIONARY).extract(text, pii)
+
+
+def count_parameters(model: nn.Module) -> dict[str, int | float]:
+    total = sum(param.numel() for param in model.parameters())
+    trainable = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    return {
+        "total": total,
+        "trainable": trainable,
+        "trainable_pct": 100.0 * trainable / max(total, 1),
+    }
+
+
+def module_weight_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
+    for parameter in module.parameters(recurse=True):
+        return parameter.dtype
+    return fallback

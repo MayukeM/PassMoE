@@ -1,163 +1,565 @@
-# PassMoE-P: A Pattern-Specialized Mixture-of-Experts Framework for Password Generation
+# PassMoE-P Revived
 
-PassMoE-P (Password Generation with Pattern-specialized Mixture-of-Experts) is the first pattern-specialized mixture-of-experts framework designed for password guessing tasks, achieving a Pareto-optimal balance between efficiency and effectiveness in password generation through semantic-level task decomposition.
+This workspace contains a runnable recovery of the PassMoE-P idea from the
+camera-ready paper and the original GitHub code. The upstream code was not a
+usable reproduction package, so the implementation here keeps the paper's core
+idea while replacing the broken training, data, generation, and evaluation
+pipeline.
 
-## Project Overview
+## What This Implements
 
-PassMoE-P addresses the scalability bottleneck of monolithic Large Language Models (LLMs) in password guessing caused by heterogeneous password patterns. Its core innovation integrates behavioral semantic domain knowledge into three parameter-efficient LoRA experts, with dynamic routing via a hybrid CNN-GRU gating network based on quantized semantic features.
+- one shared causal backbone forward;
+- three low-rank pattern experts:
+  - PII / semantic expert;
+  - high-entropy expert;
+  - leetspeak / morphology expert;
+- CNN-GRU router over `[PII score, leet score, entropy]`;
+- Top-K sparse expert mixing;
+- CPU-safe `tiny` model for smoke tests;
+- optional HuggingFace model path support for later PassLLM/Qwen experiments;
+- `.txt`, `.csv`, `.json`, and `.jsonl` password data loading;
+- checkpoint reload/resume, generation, loss evaluation, and hit-rate evaluation.
+- PassLLM-style targeted records with `Knowledge` + `password`;
+- targeted label masking so loss is computed only on password tokens.
+- NaN-safe targeted loss handling when a long prompt leaves no supervised password tokens.
+- resumable targeted JSONL generation for interrupted per-user beam search.
+- tokenizer-only targeted length audits before a formal run.
 
-Evaluated on a heterogeneous dataset covering 70.5 million real-world passwords, the framework not only significantly outperforms existing state-of-the-art baselines like PassLLM and PassGPT in attack success rate but also reduces VRAM consumption by 50% and improves throughput by 4.8x.
-
-## Architecture Features
-
-
-1. **Shared LLM Backbone**: Built on pre-trained language models (Qwen2.5/Llama3/Mistral) providing fundamental language understanding capabilities.
-   
-2. **Three Pattern-Specialized LoRA Experts**:
-   - PII Semantic Expert: Handles passwords derived from personal information (names, birthdays, etc.)
-   - High-Entropy Expert: Generates complex passwords with high randomness
-   - Lexical Transformation Expert: Processes character transformation patterns like Leetspeak
-
-3. **Semantic-Aware Gating Network**:
-   - Hybrid CNN-GRU architecture extracting password features (PII score, Leetspeak score, structural entropy)
-   - Top-2 routing strategy dynamically selecting optimal expert combinations
-
-4. **Parameter-Efficient Design**: Utilizes LoRA technology to reduce trainable parameters by 98.6%, enabling efficient fine-tuning
-
-## Quick Start
-
-### Requirements
-
-- Python 3.8+
-- PyTorch 2.0+
-- CUDA 11.7+ (recommended for GPU acceleration)
-
-### Installation
+## Quick Smoke Test
 
 ```bash
-# Clone repository
-git clone https://github.com/MayukeM/PassMoE.git
-cd PassMoE
-
-# Install dependencies
-pip install -r requirements.txt
-
-# (Optional) Install development dependencies
-pip install -r requirements-dev.txt
+python main.py smoke --epochs 1 --batch-size 4 --hidden-dim 32 --lora-rank 4 --beam-width 8 --num-passwords 20 --max-length 16 --run-name smoke_tiny_debug
 ```
 
-### Basic Usage
+Expected output directory:
 
-#### 1. Training the Model
+```text
+runs/smoke_tiny_debug/
+```
+
+Important files:
+
+- `best.pt`
+- `last.pt`
+- `all_metrics.json`
+- `eval_metrics.json`
+- `generated_candidates.csv`
+- `train_log.csv`
+
+## Train On A Local Password File
+
+Example using a local RockYou text file found under `D:\paper`:
 
 ```bash
-# Train with default configuration
-python main.py
-
-# Train with custom parameters
-python main.py --epochs 15 --batch_size 32 --base_model "meta-llama/Llama-3-8B"
+python main.py train --base-model tiny --data-path D:\paper\ccs_ps_psm\code\data\data\rockyou.txt --max-train-samples 1000 --epochs 1 --batch-size 32 --hidden-dim 64 --lora-rank 8 --beam-width 32 --num-passwords 200 --max-length 20 --run-name tiny_rockyou_1k
 ```
 
-#### 2. Generating Passwords
-
-```python
-from model import PassMoEP
-from config import Config, LEET_DICTIONARY
-import torch
-
-# Load configuration and model
-config = Config()
-model = PassMoEP(
-    base_model_name=config.BASE_MODEL_NAME,
-    leet_dictionary=LEET_DICTIONARY,
-    config=config
-)
-model.load_state_dict(torch.load("models/best_passmoe_p.pt"))
-
-# Generate passwords
-generated = model.generate_passwords(prefix="", num_passwords=10)
-print("Generated passwords:")
-for i, pwd in enumerate(generated, 1):
-    print(f"{i}. {pwd}")
-
-# Generate passwords with prefix
-generated = model.generate_passwords(prefix="Zhang", num_passwords=5)
-```
-
-#### 3. Evaluating the Model
+## Targeted PassLLM-Style Smoke
 
 ```bash
-# Evaluate model performance
-python evaluate.py --model_path "models/best_passmoe_p.pt" --test_data "data/test_passwords.csv"
+python main.py train --task targeted --base-model tiny --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 100 --epochs 1 --batch-size 8 --hidden-dim 64 --lora-rank 8 --beam-width 8 --num-passwords 100 --max-length 256 --target-eval-samples 10 --target-candidates-per-user 20 --run-name tiny_clixsense_targeted_100
 ```
 
-## Configuration
+The targeted evaluator writes PassLLM-compatible rows to:
 
-All configurable parameters are centralized in `config.py`, including:
-
-- **Model Parameters**: Base model selection, LoRA rank, hidden dimension, etc.
-- **Training Parameters**: Learning rate, batch size, number of epochs, gradient clipping threshold, etc.
-- **Data Parameters**: Maximum password length, dataset paths, validation split ratio, etc.
-- **Generation Parameters**: Temperature coefficient, beam search width, probability threshold, etc.
-
-## Project Structure
-
-```
-PassMoE/
-├── config.py           # Configuration parameters
-├── data.py             # Data loading and preprocessing
-├── model.py            # Model architecture implementation
-├── trainer.py          # Training logic
-├── main.py             # Main program entry
-├── evaluate.py         # Model evaluation tools
-├── requirements.txt    # Dependencies
-├── requirements-dev.txt # Development dependencies
-├── data/               # Data directory
-├── models/             # Model saving directory
-└── results/            # Evaluation results directory
+```text
+runs/<run_name>/targeted_input_output.jsonl
 ```
 
-## License
+## Qwen / PassLLM Micro Check
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+The local Qwen2.5-0.5B model can be checked without generation:
 
-## Ethical Considerations
-PassMoE is a project focused on password security optimization based on Mixture-of-Experts (MoE) models. Given its relevance to user privacy, data security, and potential deployment in sensitive scenarios (e.g., personal identity verification, enterprise data protection), ethical considerations are integral to the project’s development and deployment. This section outlines the core ethical principles, key risks, mitigation strategies, and compliance commitments of PassMoE.
+```bash
+python main.py train --task targeted --base-model local-qwen --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_targeted_micro --skip-generation
+```
 
-### 1. Core Ethical Principles
-The development and maintenance of PassMoE adhere to the following non-negotiable ethical principles:
-- **Privacy First**: User passwords, credentials, or sensitive data processed by PassMoE are never collected, stored, or shared without explicit, informed consent from the user.
-- **Non-Maleficence**: The project is designed to enhance security and usability; all features are built to prevent harm (e.g., unauthorized access, data breaches, or misuse for malicious purposes).
-- **Transparency**: Technical limitations, potential risks, and intended use cases of PassMoE are clearly documented to avoid user misunderstanding or misapplication.
-- **Fairness**: The tool/algorithm is accessible to all legitimate users, with no discrimination based on region, gender, socioeconomic status, or linguistic background.
-- **Accountability**: Project maintainers take responsibility for addressing ethical breaches (e.g., vulnerability exploitation) and provide timely updates to mitigate risks.
+This verifies Qwen forward/backward on the PassMoE adapters. It is not a
+performance run.
 
-### 2. Key Ethical Risks & Mitigation Strategies
-| Risk Category               | Risk Description                                                                 | Mitigation Strategies                                                                 |
-|------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| Data Privacy & Security      | Unauthorized access to PassMoE-processed data may lead to password leaks, identity theft, or financial losses for users. | - Implement end-to-end encryption for all user data processed by the model;<br>- Prohibit storage of plaintext passwords (only store salted/hased values);<br>- Conduct quarterly security audits to identify and fix vulnerabilities;<br>- Add role-based access control (RBAC) for admin/developer access to project infrastructure. |
-| Technical Misuse             | Malicious actors may exploit PassMoE’s algorithms to crack weak passwords or bypass legitimate security systems. | - Explicitly prohibit illegal use in project documentation and license agreements;<br>- Integrate anomaly detection for suspicious usage (e.g., frequent brute-force attempts);<br>- Avoid open-sourcing weaponizable core modules (or restrict access to sensitive code via approval workflows);<br>- Collaborate with cybersecurity communities to report and address misuse cases. |
-| Algorithmic Bias/Fairness    | The password strength evaluation algorithm may be biased (e.g., penalizing non-English character sets), disproportionately affecting non-Western users. | - Test the algorithm with multilingual password datasets (Latin, Cyrillic, Chinese, Arabic, etc.);<br>- Adjust scoring logic to avoid cultural/linguistic bias;<br>- Document known limitations for non-English use cases and commit to iterative optimization. |
-| Liability & Transparency     | Users may misattribute security failures (e.g., password leaks) to PassMoE, or lack clarity on responsibility for technical issues. | - Publish a clear liability disclaimer (distinguish PassMoE’s responsibility from user misconfiguration);<br>- Maintain a public GitHub Issues tracker to address ethical/security concerns transparently;<br>- Disclose technical limitations (e.g., "PassMoE does not guarantee 100% protection against advanced brute-force attacks"). |
+To start from an existing PassLLM LoRA adapter, use `--base-adapter`. The
+aliases currently supported are `fielddrop`, `baseline10k`, and `csdn`.
 
-### 3. Compliance with Laws & Regulations
-PassMoE strictly complies with global and regional data protection and cybersecurity regulations, including:
-- **GDPR (EU)**: Uphold user rights to data access, deletion, and consent withdrawal for all EU-based users.
-- **CCPA/CPRA (California, US)**: Ensure transparency in data processing and opt-out options for California consumers.
-- **Cybersecurity Laws (China)**: Adhere to data localization and security assessment requirements for Chinese users.
-- **Industry Standards**: Align with NIST Digital Identity Guidelines (SP 800-63B) for password management and ISO/IEC 27001 for information security.
-All code and documentation comply with open-source license terms (MIT) and intellectual property laws (no use of proprietary algorithms without authorization).
+```bash
+python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_fielddrop_passmoe_micro --skip-generation
+```
 
-### 4. Ongoing Ethical Review & Improvement
-Ethical considerations are not one-time checks but an ongoing process for PassMoE:
-- Conduct bi-annual ethical reviews involving external cybersecurity and ethics experts to identify emerging risks (e.g., new attack vectors targeting MoE-based password systems).
-- Collect and respond to user feedback on ethical concerns via GitHub Discussions or dedicated email channels.
-- Update this ethical considerations section alongside major version releases (e.g., v2.0) to reflect new features or risk scenarios.
-- Provide contributor guidelines that enforce ethical coding practices (e.g., avoiding bias in algorithm design, rejecting malicious pull requests).
+This merges the frozen PassLLM LoRA weights into the Qwen backbone, then trains
+only the PassMoE router/expert parameters.
 
-### 5. Conclusion
-Ethics is embedded in every stage of PassMoE’s lifecycle—from code design to documentation and deployment. The project prioritizes user privacy, security, and fairness, and is committed to mitigating potential harms while maximizing societal benefits. We welcome feedback from the community to continuously improve the ethical alignment of PassMoE and ensure it serves as a responsible tool for password security enhancement.
+## Formal Qwen + FieldDrop Run
 
-## Contact
+For the paper-facing targeted comparison, use the formal runner on a CUDA
+machine:
 
-For questions or suggestions, please contact: 1374079897@qq.com
+```bash
+python scripts/run_formal_passmoe.py --execute
+```
+
+It preflights local data/model/baseline paths, runs the Qwen + FieldDrop +
+PassMoE targeted training command, scores raw `targeted_input_output.jsonl`,
+applies the conservative PassMoE-style fusion, and writes raw/fused baseline
+comparisons plus a compact result report to:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/
+```
+
+The default formal comparison is now aligned to the local PassLLM quick anchor:
+
+- training data: `data/clixsense/clixsense_train_50_no_fd500k_targets.jsonl`
+- evaluation data: `data/clixsense/clixsense_test_500_from_fd500k_p00.json`
+- prompt template: PassLLM `prompt_template_id=0`
+- baseline variant: `fd500k_p00_unique`, SR@100 `0.0740` over 500 unique targets
+- extra training budget: first `10,000` filtered train rows by default
+- seed: `42`
+- actual local data cardinality: filtered train `1,063,798` rows, evaluation
+  `500` rows
+
+Do not use `clixsense_sample_10k.json` for the formal run: the alignment audit
+found it contains all 500 `fd500k_p00` evaluation targets.
+
+On this CPU-only host, use preflight mode only:
+
+```bash
+python scripts/run_formal_passmoe.py
+```
+
+The preflight writes a CUDA handoff script at:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/run_formal_cuda.ps1
+```
+
+On a CUDA host with the Python environment active, run that script from
+PowerShell to execute the formal runner and then refresh status/report:
+
+```powershell
+.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1
+```
+
+The equivalent direct command is:
+
+```powershell
+python scripts\run_formal_passmoe.py --execute --run-name qwen_fielddrop_passmoe_clixsense_10k --seed 42
+```
+
+Preflight validates the aligned data files, baseline metric contract, local Qwen
+model directory, tokenizer/weights, and the FieldDrop LoRA adapter files before
+gating on CUDA. It also builds Qwen+FieldDrop on CPU by default and writes:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/deep_model_check.json
+```
+
+The current deep check reports `72` merged LoRA modules, `0` skipped modules,
+`494,172,675` total parameters, and `139,907` trainable PassMoE parameters.
+Resolved model/adapter paths are written to `run_manifest.json`. Use
+`--skip-deep-model-check` only when you need a faster file-only preflight.
+The default formal run does not use HuggingFace `device_map`, so it does not
+require `accelerate`; `--use-device-map` is available as an opt-in and preflight
+checks that `accelerate` is installed before allowing that path.
+
+The formal dtype default is `--dtype auto`. For the current Qwen formal command,
+that resolves to `bfloat16` in `run_manifest.json`, matching the local Qwen
+config and reducing CUDA memory pressure. Override with `--dtype float16` or
+`--dtype float32` if the target GPU/runtime requires it. CPU deep-check remains
+float32 because it is only validating structure and LoRA merge compatibility.
+The formal runner also exposes `--seed` and passes it through to train/evaluate;
+the default is `42`, and the chosen seed is written to `run_manifest.json`,
+`environment_snapshot.json`, `summary.md`, and `formal_result_report.json/md`.
+Status and report recovery commands preserve the manifest seed, so copied
+`needs_model_execution`, resume, and postprocess commands do not silently drift
+from the formal seed contract.
+
+Training/evaluation sequence truncation and decoding length are separate.
+The formal command keeps `--max-length 256` for supervised-token coverage, while
+generation defaults to `--generation-max-new-tokens 32`. The 500-target eval
+audit has max password token length `16`, and the filtered train audit has max
+password token length `18`, so this decoding cap is enough for the audited formal
+split without making each beam search run 256 decoding steps.
+
+Targeted beam search batches active beams during decoding. The formal default is
+`--generation-batch-size 32`; reduce it if a CUDA host hits generation-time OOM,
+or raise it if there is spare VRAM. The `batched_generation_execute_smoke`
+diagnostic passed validation with `--generation-batch-size 4`, confirming the
+batched path, scoring, fusion, and validator are wired end to end.
+For targeted generation, candidates are decoded from tokens after the prompt
+token boundary, not by stripping a decoded string prefix. The validator also
+checks that raw/fused candidate lists do not leak the full `model_input` prompt.
+`token_suffix_execute_smoke` passed this path.
+Router features are also aligned between training and targeted generation:
+training extracts features from `(password, pii)`, and generation now extracts
+features from the current candidate suffix plus the same record PII. This keeps
+the PII expert active under the same semantics used during supervised updates.
+`feature_consistency_execute_smoke` passed this path.
+
+Beam completion is also counted by unique decoded password rather than by raw
+token sequence. If multiple beams decode to the same password, generation tops
+up from remaining active beams before writing the row. The
+`unique_candidate_execute_smoke` diagnostic produced 4 rows with 6/6 unique
+candidates each and passed formal validation.
+
+The current PassMoE implementation mixes routed expert hidden states before a
+single shared LM-head projection. This keeps the shared-head mixture equivalent
+while avoiding three full Qwen vocab-logit tensors in memory during training.
+
+Preflight also audits targeted prompt/password token coverage for both formal
+evaluation targets and training samples:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/targeted_length_audit.json
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/targeted_length_audit_train.json
+```
+
+Current Qwen results at `--max-length 256` are zero-valid/truncated `0/500` on
+eval and `0/1000` on train.
+
+If a targeted JSONL already exists, the same runner can test post-run scoring
+and fusion without retraining:
+
+```bash
+python scripts/run_formal_passmoe.py --run-name score_tiny_clixsense_targeted_100_fusion --score-only --jsonl runs\tiny_clixsense_targeted_100\targeted_input_output.jsonl --force
+```
+
+Recovery commands for interrupted formal runs:
+
+```bash
+# Inspect the current formal artifact state and get a recommended next command.
+python scripts/inspect_formal_status.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+
+# Continue training from the last checkpoint; --epochs is the target total epoch count.
+python scripts/run_formal_passmoe.py --execute --resume-from runs\qwen_fielddrop_passmoe_clixsense_10k\last.pt
+
+# If training finished but generation/scoring failed, generate JSONL from a checkpoint.
+python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\best.pt
+
+# If targeted generation was interrupted, reuse completed JSONL rows and append missing rows.
+python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\best.pt --resume-generation
+
+# If targeted_input_output.jsonl already exists, skip model execution and only score/fuse.
+python scripts/run_formal_passmoe.py --execute --skip-train-if-jsonl-exists --force
+
+# Explicit post-processing alias for an arbitrary JSONL.
+python scripts/run_formal_passmoe.py --postprocess-only --jsonl runs\qwen_fielddrop_passmoe_clixsense_10k\targeted_input_output.jsonl --force
+```
+
+The status inspector reads `run_manifest.json`, `preflight.json`, expected
+JSONL files, scores, validation output, checkpoints, and per-command logs. It
+classifies states such as `needs_model_execution`, `partial_generation`,
+`needs_postprocess`, `validation_failed`, and `complete`, then prints the next
+recommended command. It only returns `complete` when the required JSONL,
+postprocess artifacts, and a passed `formal_validation.json` are all present,
+so a stale validation file cannot mask missing outputs.
+
+To render a concise paper-facing status/result report from the same artifacts:
+
+```bash
+python scripts/render_formal_report.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+```
+
+This writes:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_result_report.md
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_result_report.json
+```
+
+The current formal report is `status=needs_model_execution` and
+`claim_status=incomplete`: preflight and model-construction checks pass, but no
+500-row CUDA-generated JSONL or score artifacts exist yet. CPU/subset smoke
+runs are marked `diagnostic_only` and are not treated as PassLLM comparisons.
+
+In formal `--execute` mode, the runner now requires the scored JSONL row count
+to match `--target-eval-samples`. Use `--resume-generation` to finish a partial
+file, or `--allow-partial-jsonl` only for diagnostics that should not be treated
+as a formal comparison.
+When resuming, rows with fewer candidates than `--target-candidates-per-user`
+are treated as incomplete and regenerated. Resume also rejects stale rows with
+empty candidates, duplicate decoded passwords, or candidates that leak the full
+prompt, so a dirty partial JSONL is cleaned during recovery instead of failing
+only after post-processing.
+When `--skip-train-if-jsonl-exists` reuses a completed JSONL, the runner now
+performs the same row/candidate/rank quality checks before scoring and writes
+`reused_jsonl_quality.json`; invalid reused files fail before score/fuse outputs
+are produced. JSONL readers accept UTF-8 BOM input from Windows tools.
+Preflight also checks that each requested budget has a matching baseline metric
+key such as `sr1`, `sr10`, `sr50`, or `sr100`, and that
+`--target-candidates-per-user` is at least the largest requested budget.
+It records `data_counts` in `run_manifest.json` and rejects
+`--max-train-samples` or `--target-eval-samples` values larger than the
+available train/eval records.
+
+After a non-diagnostic `--execute`, the formal runner automatically validates
+the completed artifacts. You can rerun that gate directly:
+
+```bash
+python scripts/validate_formal_outputs.py
+```
+
+It checks the `fd500k_p00_unique` 500-row contract, raw/fused SR metrics,
+comparison deltas, JSONL row counts, candidate budget, fusion analysis, and
+that conservative fusion did not worsen any ranks. Formal score commands
+recompute ranks from each row's `outputPasswords`, and the validator checks that
+raw/fused `min_cracked_guess_number` fields match those recomputed ranks and
+that candidate lists do not contain empty entries, duplicate passwords, or the
+full prompt. The
+generator now also stops/tops up by unique decoded passwords, so the strict
+candidate-budget check is applied to the final visible password list rather than
+raw beam sequences. The validator records SHA256 hashes for the raw JSONL,
+score/comparison files, fused JSONL, and fusion analysis; the status inspector
+requires those hashes to match before reporting `complete`, so stale passed
+validation files cannot mask modified artifacts. For non-score-only,
+claim-carrying formal results, the status inspector also requires
+`targeted_generation_metrics.json` in the run directory to prove the JSONL came
+from a PassMoE model generation step; otherwise it reports
+`model_execution_unverified`. The default report paths are:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_validation.json
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_validation.md
+```
+
+Every formal subcommand is also logged under:
+
+```text
+artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/logs/
+```
+
+`run_manifest.json` records this as `command_logs_dir`. The logs include the
+exact command, start/end timestamps, stdout/stderr, and return code.
+During targeted generation, the train/evaluate child command now emits
+single-line JSON progress markers prefixed with `__PASSMOE_PROGRESS__`. These
+markers include completed/total targets, elapsed seconds, seconds per row,
+current hit counts by budget, resumed rows, candidate budget, generation batch
+size, generated rows in the current process, remaining rows, ETA, and the JSONL
+result path. For the formal 500-row run, they are written
+roughly every 5% of target completion and once at completion, so a CUDA run can
+be monitored from `logs/01_train.log` without waiting for final scoring.
+`scripts/inspect_formal_status.py` and `scripts/render_formal_report.py` now
+also parse the latest marker and expose it as `targeted_generation_progress`;
+this is monitoring only and does not change the formal completion gate.
+The runner also writes `environment_snapshot.json` for every preflight or
+execute invocation and records it as `environment_snapshot_path` in
+`run_manifest.json`. The snapshot includes Python/platform details, selected
+package versions, torch/CUDA metadata, whitelisted cache/GPU environment
+variables, and `nvidia-smi` GPU summary when available.
+It also writes `cuda_readiness.json` and `cuda_readiness.md`, and records them
+as `cuda_readiness_path` / `cuda_readiness_md_path` in `run_manifest.json`.
+The CUDA readiness check is advisory: it does not replace formal validation,
+but it surfaces whether the current host has a CUDA-enabled PyTorch build,
+visible CUDA devices, and enough VRAM for the full Qwen run. On this machine it
+reports `not_ready` because PyTorch is CPU-only and `nvidia-smi` only exposes a
+2 GB GeForce MX250. Run it directly with:
+
+```bash
+python scripts/check_cuda_readiness.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+```
+
+The runner also writes `formal_result_report.md` and
+`formal_result_report.json` automatically after preflight, score-only
+post-processing, diagnostic execute, or full execute. Pass
+`--skip-result-report` only if you want to suppress that read-only report
+rendering.
+
+The auto-validation path has been smoke-tested through the runner with a tiny
+CPU diagnostic run:
+
+```bash
+python scripts/run_formal_passmoe.py --execute --allow-cpu --run-name batched_generation_execute_smoke --base-model tiny --base-adapter none --data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --epochs 1 --max-train-samples 8 --max-eval-samples 5 --batch-size 2 --max-length 256 --generation-max-new-tokens 16 --generation-batch-size 4 --lora-rank 8 --beam-width 12 --target-eval-samples 5 --target-candidates-per-user 12 --budgets 1,10 --skip-length-audit --skip-deep-model-check --force
+```
+
+That diagnostic writes
+`artifacts/formal/auto_validation_execute_smoke/formal_validation.json` with
+status `passed`; it is an integration smoke only, not a PassLLM comparison.
+A second hidden-mix integration run,
+`artifacts/formal/hidden_mix_execute_smoke/formal_validation.json`, also passes
+after the memory optimization.
+The dtype-auto integration run,
+`artifacts/formal/dtype_auto_execute_smoke/formal_validation.json`, also passes.
+The environment-snapshot execute smoke,
+`artifacts/formal/env_snapshot_smoke/formal_validation.json`, also passes and
+its report is `diagnostic_only`.
+The CUDA-readiness execute smoke,
+`artifacts/formal/cuda_readiness_smoke/formal_validation.json`, also passes and
+verifies that readiness artifacts are written through the execute path; it is
+also `diagnostic_only`.
+The seed-contract execute smoke,
+`artifacts/formal/seed_contract_smoke/formal_validation.json`, also passes and
+verifies that a non-default seed is propagated to child commands and artifacts;
+it is also `diagnostic_only`.
+The progress-marker execute smoke,
+`artifacts/formal/progress_marker_line_smoke/formal_validation.json`, also
+passes and verifies that `__PASSMOE_PROGRESS__` lines are persisted in
+`logs/01_train.log`; it is also `diagnostic_only`.
+The ETA payload execute smoke, `artifacts/formal/progress_eta_execute_smoke`,
+also passes and verifies `generated_rows_this_run`, `remaining_rows`,
+`seconds_per_generated_row`, and `eta_seconds` in logs/status/report artifacts.
+
+The actual local Qwen + FieldDrop execute path has also been tested end to end
+with a deliberately tiny CPU diagnostic:
+
+```bash
+python scripts/run_formal_passmoe.py --execute --allow-cpu --run-name qwen_fielddrop_tiny_execute_smoke --base-model local-qwen --base-adapter fielddrop --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --epochs 1 --max-train-samples 2 --max-eval-samples 2 --batch-size 1 --max-length 256 --generation-max-new-tokens 4 --generation-batch-size 2 --lora-rank 4 --beam-width 2 --target-eval-samples 1 --target-candidates-per-user 2 --budgets 1 --fusion-bootstrap-iters 10 --force
+```
+
+That run completed Qwen+FieldDrop training, targeted generation, raw/fused
+scoring, fusion analysis, and formal validation. Its report is marked
+`diagnostic_only`; it proves the real model path executes but is not a
+PassLLM-comparable result.
+
+## Score Existing PassLLM/PassMoE JSONL
+
+```bash
+python main.py score-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --budgets 1,10,50,100
+python main.py score-jsonl --jsonl runs\tiny_clixsense_targeted_100\targeted_input_output.jsonl --budgets 1,10,50,100
+```
+
+To recompute ranks directly from each row's `outputPasswords` list:
+
+```bash
+python main.py score-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --budgets 1,10,50,100 --recompute-from-candidates
+```
+
+## Fuse Existing PassLLM Candidates With PassMoE Experts
+
+This CPU-side diagnostic adds deterministic PassMoE-style PII/date/morphology
+expert candidates to existing PassLLM JSONL outputs.
+
+One-command reproduction for all three local PassLLM quick anchors:
+
+```bash
+python scripts/run_fusion_experiments.py
+```
+
+This refreshes `artifacts/fusion/*_score_m80*`,
+`artifacts/fusion/fusion_repro_summary.json`, and
+`artifacts/reports/fusion_repro_summary.md`.
+
+Parameter-search guardrail:
+
+```bash
+python scripts/search_fusion_params.py
+```
+
+The current conservative default was selected by training on
+`baseline10k_p00,baseline500k_p00` and checking `fd500k_p00` as a held-out
+quick-output variant. It uses `--score-expert-weight 0.05`.
+
+```bash
+python main.py fuse-jsonl --jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --out-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --out-metrics artifacts\fusion\fd500k_score_m80_w0p05_o2_metrics.json --strategy score --max-expert-candidates 80 --score-expert-weight 0.05 --budgets 1,10,50,100
+python main.py score-jsonl --jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --budgets 1,10,50,100 --recompute-from-candidates
+python main.py analyze-fusion --original-jsonl D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --fused-jsonl artifacts\fusion\fd500k_score_m80_w0p05_o2.jsonl --budgets 1,10,50,100 --bootstrap-iters 2000 --out artifacts\fusion\fd500k_score_m80_w0p05_o2_analysis.json
+```
+
+On the local `fd500k_p00` quick result, this raises SR@100 from `0.0736` to
+`0.0815` while leaving SR@1 and SR@10 unchanged. The paired bootstrap CI for
+SR@100 delta is `[0.0020, 0.0159]`. See
+`artifacts/reports/fusion_experiment.md`.
+
+For the stricter 500-row `fd500k_p00_unique` comparison contract, first
+deduplicate the imported PassLLM quick JSONL by `index`, then run score-only
+fusion. The score-only runner now automatically runs the formal validator with
+`--min-candidates 0`, which is needed because the imported PassLLM quick output
+has variable candidate-list lengths:
+
+```bash
+python scripts/deduplicate_jsonl.py --input D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\result\quick\fd500k_p00\input_output.jsonl --output artifacts\formal\fd500k_p00_unique_fusion\input_output_unique.jsonl --key index --policy first --report artifacts\formal\fd500k_p00_unique_fusion\dedupe_report.json
+python scripts/run_formal_passmoe.py --score-only --run-name fd500k_p00_unique_fusion --jsonl artifacts\formal\fd500k_p00_unique_fusion\input_output_unique.jsonl --baseline-variant fd500k_p00_unique --budgets 1,10,50,100 --fusion-bootstrap-iters 2000 --force
+```
+
+To rerun only the validation or report gate:
+
+```bash
+python scripts/validate_formal_outputs.py --artifacts-dir artifacts\formal\fd500k_p00_unique_fusion --expected-baseline-variant fd500k_p00_unique --budgets 1,10,50,100 --min-candidates 0
+python scripts/render_formal_report.py --artifacts-dir artifacts\formal\fd500k_p00_unique_fusion
+```
+
+The validated score-only artifact is:
+
+```text
+artifacts/formal/fd500k_p00_unique_fusion/
+```
+
+It reproduces the raw baseline exactly on the 500-row contract
+(`SR@100=0.0740`) and raises fused `SR@100` to `0.0820` with zero worsened
+ranks and zero lost hits. Its report is marked `supplementary_fusion_only`,
+because it fuses existing PassLLM output and does not replace the full neural
+CUDA run.
+
+## Evaluate Or Generate From A Checkpoint
+
+```bash
+python main.py evaluate --checkpoint runs\smoke_tiny_debug\best.pt --num-passwords 20 --beam-width 8
+python main.py generate --checkpoint runs\smoke_tiny_debug\best.pt --num-passwords 10 --beam-width 8 --prefix p
+```
+
+Direct training resume is also supported:
+
+```bash
+python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --prompt-template-id 0 --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --max-train-samples 10000 --epochs 4 --resume-checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\last.pt --max-length 256 --generation-max-new-tokens 32 --generation-batch-size 32 --run-name qwen_fielddrop_passmoe_clixsense_10k
+```
+
+Current checkpoints use compact `passmoe_trainable_state_v2` format. For Qwen,
+frozen backbone weights are omitted and reloaded from `--base-model`, while all
+trainable router/expert parameters must be present. Loading now fails if any
+trainable key is missing, instead of silently random-initializing it. New
+checkpoints also record `trainable_keys`, optimizer state, history, and the
+merged adapter report. `checkpoint_contract_smoke` verified evaluate and epoch-2
+resume with this contract.
+
+For targeted loss diagnostics, check `loss.valid_tokens` in `eval_metrics.json`.
+If it is `0`, the prompt consumed the whole `max_length`; increase
+`--max-length` before trusting loss/perplexity.
+During training, `metrics.json` and `train_log.csv` also record
+`train_valid_tokens`, `val_valid_tokens`, batch counts, and zero-token batch
+counts. Targeted training now raises immediately if training or validation has
+zero supervised password tokens.
+
+## Audit Targeted Token Lengths
+
+This checks prompt/password token coverage without loading model weights:
+
+```bash
+python main.py inspect-targeted-lengths --base-model local-qwen --prompt-template-id 0 --data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --max-train-samples 1000 --max-lengths 128,256,384,512 --out artifacts\reports\targeted_length_audit_qwen_fd500k_targets.json
+```
+
+On the local Qwen tokenizer and reconstructed 500-target `fd500k_p00` set,
+`max_length=256` has `zero_valid_records=0` and `truncated_records=0`; the
+minimum max length for nonzero password labels in that slice is `87`.
+
+## Audit Target Alignment
+
+```bash
+python scripts/audit_target_alignment.py --train-data D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_train_50.jsonl --export-filtered-train data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl
+```
+
+This exports `data/clixsense/clixsense_test_500_from_fd500k_p00.json` from the
+PassLLM quick result and removes exact target leakage from the training JSONL.
+The latest reports are under `artifacts/reports/target_alignment_audit*.md`.
+
+## Inspect A Data File
+
+```bash
+python main.py inspect-data --data-path D:\paper\ccs_ps_psm\code\data\data\rockyou.txt --max-train-samples 5
+```
+
+## Local PassLLM Assets
+
+The current machine already has useful PassLLM assets:
+
+- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code`
+- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\model\Qwen2.5-0.5B-Instruct`
+- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\checkpoints`
+- `D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data`
+
+The imported baseline contract is recorded at:
+
+```text
+baselines/imported/passllm-fielddrop/json/metric_contract.json
+```
+
+## Current Caveat
+
+The current machine reports CPU-only PyTorch. The Qwen path is functional, but a
+paper-facing SR@K comparison against PassLLM FieldDrop should be run on GPU.

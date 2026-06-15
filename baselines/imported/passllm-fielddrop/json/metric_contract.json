@@ -1,0 +1,53 @@
+{
+  "baseline_id": "passllm-fielddrop",
+  "task": "targeted password guessing",
+  "dataset": "local PassLLM-FieldDrop quick evaluation set",
+  "split_contract": "Existing quick result JSONL files under D:\\paper\\1-ACCEPT\\PassLLM-FieldDrop\\code\\result\\quick. Each row has a real password, generated candidate list, and min_cracked_guess_number.",
+  "primary_metric": "sr100",
+  "metric_directions": {
+    "sr1": "higher_is_better",
+    "sr10": "higher_is_better",
+    "sr50": "higher_is_better",
+    "sr100": "higher_is_better"
+  },
+  "metric_definitions": {
+    "srK": "count(rows where 1 <= min_cracked_guess_number <= K) / count(rows)"
+  },
+  "baseline_variants": {
+    "baseline10k_p00": {
+      "n": 500,
+      "sr1": 0.004,
+      "sr10": 0.024,
+      "sr50": 0.026,
+      "sr100": 0.026
+    },
+    "baseline500k_p00": {
+      "n": 500,
+      "sr1": 0.002,
+      "sr10": 0.002,
+      "sr50": 0.002,
+      "sr100": 0.002
+    },
+    "fd500k_p00": {
+      "n": 503,
+      "sr1": 0.0199,
+      "sr10": 0.0596,
+      "sr50": 0.0736,
+      "sr100": 0.0736
+    },
+    "fd500k_p00_unique": {
+      "n": 500,
+      "sr1": 0.02,
+      "sr10": 0.06,
+      "sr50": 0.074,
+      "sr100": 0.074,
+      "origin": "fd500k_p00 input_output.jsonl deduplicated by first occurrence of index; duplicate indices 0,1,2"
+    }
+  },
+  "default_variant_id": "fd500k_p00_unique",
+  "comparability_caveats": [
+    "These metrics were parsed from existing local result files, not regenerated in the current PassMoE run.",
+    "The current PassMoE smoke and RockYou tiny runs are trawling-style and not yet comparable to the targeted PassLLM FieldDrop baseline.",
+    "A fair PassMoE-vs-PassLLM claim requires the same targeted ClixSense/CSDN records, prompt/PII fields, candidate budget, and duplicate handling."
+  ]
+}
