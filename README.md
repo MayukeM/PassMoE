@@ -79,15 +79,29 @@ performance run.
 
 To start from an existing PassLLM LoRA adapter, use `--base-adapter`. The
 aliases currently supported are `fielddrop`, `baseline10k`, and `csdn`.
+`fielddrop` is the checkpoint/adapter from the separate PassLLM FieldDrop work.
+It is used here only as an imported PassLLM baseline or initialization
+foundation; it is not part of the PassMoE method claim.
 
 ```bash
 python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --data-path D:\paper\1-ACCEPT\PassLLM-FieldDrop\code\data\clixsense\clixsense_test_1000.json --max-train-samples 4 --epochs 1 --batch-size 1 --max-length 128 --lora-rank 4 --run-name qwen_fielddrop_passmoe_micro --skip-generation
 ```
 
-This merges the frozen PassLLM LoRA weights into the Qwen backbone, then trains
-only the PassMoE router/expert parameters.
+This merges the frozen imported PassLLM/FieldDrop LoRA weights into the Qwen
+backbone, then trains only the PassMoE router/expert parameters.
 
-## Formal Qwen + FieldDrop Run
+## Method Boundary
+
+PassMoE and FieldDrop are deliberately separated in this repository:
+
+- FieldDrop belongs to the separate PassLLM improvement line.
+- `--base-adapter fielddrop` means "load that external PassLLM adapter as the
+  baseline/foundation checkpoint."
+- PassMoE refers only to the revived router/expert adapter, targeted training,
+  generation, and optional conservative fusion implemented in this repository.
+- Any paper-facing claim must not describe FieldDrop as a PassMoE contribution.
+
+## Formal PassMoE Run
 
 For the paper-facing targeted comparison, use the formal runner on a CUDA
 machine:
@@ -96,10 +110,11 @@ machine:
 python scripts/run_formal_passmoe.py --execute
 ```
 
-It preflights local data/model/baseline paths, runs the Qwen + FieldDrop +
-PassMoE targeted training command, scores raw `targeted_input_output.jsonl`,
-applies the conservative PassMoE-style fusion, and writes raw/fused baseline
-comparisons plus a compact result report to:
+It preflights local data/model/baseline paths, runs PassMoE targeted training
+on the imported PassLLM/FieldDrop foundation when `--base-adapter fielddrop` is
+selected, scores raw `targeted_input_output.jsonl`, applies the conservative
+PassMoE-style fusion, and writes raw/fused baseline comparisons plus a compact
+result report to:
 
 ```text
 artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/
@@ -145,8 +160,9 @@ python scripts\run_formal_passmoe.py --execute --run-name qwen_fielddrop_passmoe
 ```
 
 Preflight validates the aligned data files, baseline metric contract, local Qwen
-model directory, tokenizer/weights, and the FieldDrop LoRA adapter files before
-gating on CUDA. It also builds Qwen+FieldDrop on CPU by default and writes:
+model directory, tokenizer/weights, and the imported PassLLM/FieldDrop LoRA
+adapter files before gating on CUDA. It also builds the Qwen backbone with the
+external FieldDrop adapter on CPU by default and writes:
 
 ```text
 artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/deep_model_check.json
@@ -396,15 +412,16 @@ The ETA payload execute smoke, `artifacts/formal/progress_eta_execute_smoke`,
 also passes and verifies `generated_rows_this_run`, `remaining_rows`,
 `seconds_per_generated_row`, and `eta_seconds` in logs/status/report artifacts.
 
-The actual local Qwen + FieldDrop execute path has also been tested end to end
-with a deliberately tiny CPU diagnostic:
+The actual local Qwen path with the imported PassLLM/FieldDrop adapter has also
+been tested end to end with a deliberately tiny CPU diagnostic:
 
 ```bash
 python scripts/run_formal_passmoe.py --execute --allow-cpu --run-name qwen_fielddrop_tiny_execute_smoke --base-model local-qwen --base-adapter fielddrop --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --epochs 1 --max-train-samples 2 --max-eval-samples 2 --batch-size 1 --max-length 256 --generation-max-new-tokens 4 --generation-batch-size 2 --lora-rank 4 --beam-width 2 --target-eval-samples 1 --target-candidates-per-user 2 --budgets 1 --fusion-bootstrap-iters 10 --force
 ```
 
-That run completed Qwen+FieldDrop training, targeted generation, raw/fused
-scoring, fusion analysis, and formal validation. Its report is marked
+That run completed PassMoE training/generation on top of the imported
+PassLLM/FieldDrop adapter, raw/fused scoring, fusion analysis, and formal
+validation. Its report is marked
 `diagnostic_only`; it proves the real model path executes but is not a
 PassLLM-comparable result.
 
@@ -562,4 +579,7 @@ baselines/imported/passllm-fielddrop/json/metric_contract.json
 ## Current Caveat
 
 The current machine reports CPU-only PyTorch. The Qwen path is functional, but a
-paper-facing SR@K comparison against PassLLM FieldDrop should be run on GPU.
+paper-facing SR@K comparison against the PassLLM FieldDrop baseline should be
+run on GPU. Keep the method boundary clear: FieldDrop is the comparison /
+initialization baseline, while PassMoE is the router/expert/fusion layer being
+tested here.

@@ -11,3 +11,8 @@ comparison_note: >
   Imported as a local PassLLM-style baseline anchor. Metrics are parsed from
   existing quick evaluation JSONL files; no new PassLLM inference was launched
   during this pass because the current Python/Torch environment is CPU-only.
+method_boundary: >
+  FieldDrop belongs to a separate PassLLM lightweight-improvement line. In this
+  PassMoE repository it is used only as an external baseline/foundation adapter;
+  PassMoE claims should refer to the router/expert training, generation, and
+  conservative fusion layers implemented here.

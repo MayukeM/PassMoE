@@ -27,7 +27,11 @@ COMMAND_LOG_INDEX = 0
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Preflight, run, and score the formal Qwen+FieldDrop+PassMoE targeted comparison."
+        description=(
+            "Preflight, run, and score the formal PassMoE targeted comparison. "
+            "When --base-adapter fielddrop is used, FieldDrop is an imported "
+            "PassLLM baseline/foundation adapter, not a PassMoE method component."
+        )
     )
     parser.add_argument("--run-name", default="qwen_fielddrop_passmoe_clixsense_10k")
     parser.add_argument("--data-path", default=DEFAULT_DATA_PATH)

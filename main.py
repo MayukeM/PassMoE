@@ -101,7 +101,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base-model", default=None, help="'tiny', 'local-qwen', or a HF model/path")
-    parser.add_argument("--base-adapter", default=None, help="'fielddrop', 'baseline10k', 'csdn', or a LoRA adapter directory")
+    parser.add_argument(
+        "--base-adapter",
+        default=None,
+        help=(
+            "'fielddrop', 'baseline10k', 'csdn', or a LoRA adapter directory. "
+            "'fielddrop' is an imported PassLLM/FieldDrop baseline adapter, not a PassMoE method component."
+        ),
+    )
     parser.add_argument("--task", choices=["trawling", "targeted"], default=None)
     parser.add_argument("--prompt-template-id", default=None)
     parser.add_argument("--data-path", default=None)

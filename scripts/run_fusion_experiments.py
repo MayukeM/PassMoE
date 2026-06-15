@@ -310,7 +310,8 @@ def render_markdown(summary: dict[str, Any], summary_path: Path) -> str:
             "",
             "This reproduces the CPU-side deterministic fusion diagnostic over existing PassLLM quick outputs. "
             "It is comparable under the JSONL SR@K contract, but it is not a replacement for the full neural "
-            "Qwen + FieldDrop + PassMoE targeted GPU run.",
+            "PassMoE targeted GPU run on the imported PassLLM/FieldDrop baseline foundation. FieldDrop belongs "
+            "to the separate PassLLM improvement line and should not be cited as a PassMoE contribution.",
             "",
         ]
     )

@@ -31,7 +31,8 @@
 - [x] score-only formal runner now auto-validates imported/fusion artifacts with `validation_min_candidates=0`, while full neural execute validation remains strict.
 - [x] one-command fusion reproduction script added and rerun for all three PassLLM quick anchors.
 - [x] conservative fusion parameter search added; selected `score_expert_weight=0.05` keeps SR@1/SR@10 unchanged and has zero worsened ranks on `fd500k_p00`.
-- [x] formal Qwen+FieldDrop+PassMoE runner added with preflight, manifest, raw/fused score, fusion analysis, and baseline comparison outputs.
+- [x] method boundary documented: FieldDrop is an external PassLLM improvement/baseline adapter, not a PassMoE contribution.
+- [x] formal PassMoE runner added with imported PassLLM/FieldDrop foundation support, preflight, manifest, raw/fused score, fusion analysis, and baseline comparison outputs.
 - [x] checkpoint resume added for `main.py train` and verified on a two-stage tiny run.
 - [x] formal runner recovery modes added and verified: `--resume-from`, `--checkpoint`, `--skip-train-if-jsonl-exists`, and `--postprocess-only`.
 - [x] targeted loss NaN guard added for all-ignored label batches; evaluation now reports `valid_tokens`.
@@ -82,13 +83,13 @@
 - [x] formal baseline default corrected to `fd500k_p00_unique` to avoid the duplicated 503-row quick anchor.
 - [x] `fd500k_p00_unique_fusion` score-only supplementary artifact regenerated under `D:\paper\passllm-moe\PassMoE`; validation is `passed` and path audit is clean.
 - [x] current local validation passed: `py_compile`, formal preflight, JSONL scoring, data inspection, and independent tiny CPU smoke under `runs/current_validation_smoke`.
-- [x] formal preflight now validates resolved local Qwen and FieldDrop adapter assets before CUDA execution.
-- [x] actual local Qwen + FieldDrop model construction verified on CPU: LoRA merge `72` modules, `0` skipped; total parameters `494,172,675`, trainable `139,907`.
-- [x] Qwen + FieldDrop construction check is now integrated into `scripts/run_formal_passmoe.py` and writes `artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/deep_model_check.json` by default.
+- [x] formal preflight now validates resolved local Qwen and imported PassLLM/FieldDrop adapter assets before CUDA execution.
+- [x] actual local Qwen + imported FieldDrop adapter construction verified on CPU: LoRA merge `72` modules, `0` skipped; total parameters `494,172,675`, trainable `139,907`.
+- [x] Qwen + imported FieldDrop adapter construction check is now integrated into `scripts/run_formal_passmoe.py` and writes `artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/deep_model_check.json` by default.
 - [x] formal output validator added and wired into non-diagnostic `--execute`; current formal directory correctly fails validation until CUDA-generated JSONL/score artifacts exist.
 - [x] validator positive path checked on tiny diagnostic artifacts with `--expected-rows 5 --min-candidates 0`.
 - [x] formal runner auto-validation path verified end-to-end on tiny CPU execute: `artifacts/formal/auto_validation_execute_smoke/formal_validation.json` is `passed`.
-- [x] real local Qwen + FieldDrop execute path verified end-to-end on CPU diagnostic: `artifacts/formal/qwen_fielddrop_tiny_execute_smoke/formal_validation.json` is `passed` and its report is `diagnostic_only`.
+- [x] real local Qwen path with imported FieldDrop adapter verified end-to-end on CPU diagnostic: `artifacts/formal/qwen_fielddrop_tiny_execute_smoke/formal_validation.json` is `passed` and its report is `diagnostic_only`.
 - [x] auto-report execute smoke passed: `artifacts/formal/auto_report_execute_smoke/formal_result_report.json` is generated automatically and marked `diagnostic_only`.
 - [x] diagnostic runner support added: `--max-eval-samples` and explicit no-adapter aliases `none`, `null`, `-`.
 - [ ] CUDA formal neural comparison still needs to run: `.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1` from `D:\paper\passllm-moe\PassMoE` on a CUDA-enabled PyTorch host.
