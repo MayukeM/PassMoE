@@ -7,7 +7,8 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / "qwen_fielddrop_passmoe_clixsense_10k"
+DEFAULT_FORMAL_RUN_NAME = "qwen_fielddrop_base_identity_clixsense_500_raw"
+DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / DEFAULT_FORMAL_RUN_NAME
 
 
 def main() -> None:
@@ -38,7 +39,7 @@ def build_cuda_readiness(
 ) -> dict[str, Any]:
     manifest_path = artifacts_dir / "run_manifest.json"
     manifest = load_json_if_exists(manifest_path)
-    snapshot_path = Path(str(manifest.get("environment_snapshot_path", ""))) if manifest else artifacts_dir / "environment_snapshot.json"
+    snapshot_path = relocate_manifest_path(manifest.get("environment_snapshot_path", ""), manifest) if manifest else artifacts_dir / "environment_snapshot.json"
     snapshot = load_json_if_exists(snapshot_path)
     checks: list[dict[str, Any]] = []
 
@@ -207,7 +208,7 @@ def readiness_recommendation(
         }
     return {
         "reason": "CUDA readiness checks passed.",
-        "action": f"python scripts/run_formal_passmoe.py --execute --run-name {manifest.get('run_name', 'qwen_fielddrop_passmoe_clixsense_10k')}",
+        "action": f"python scripts/run_formal_passmoe.py --execute --run-name {manifest.get('run_name', DEFAULT_FORMAL_RUN_NAME)}",
     }
 
 
@@ -320,7 +321,7 @@ def safe_int(value: Any, default: int = 0) -> int:
 
 
 def load_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
@@ -330,6 +331,36 @@ def resolve_path(path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return (REPO_ROOT / candidate).resolve()
+
+
+def relocate_manifest_path(value: Any, manifest: dict[str, Any]) -> Path:
+    text = str(value or "")
+    if not text:
+        return Path()
+    candidate = Path(text)
+    if candidate.exists():
+        return candidate
+    relative = relative_to_manifest_root(text, str(manifest.get("repo_root", "")))
+    if relative is not None:
+        return (REPO_ROOT / Path(*relative.split("/"))).resolve()
+    return candidate
+
+
+def relative_to_manifest_root(path_text: str, root_text: str) -> str | None:
+    if not path_text or not root_text:
+        return None
+    path_norm = path_text.replace("\\", "/").rstrip("/")
+    root_norm = root_text.replace("\\", "/").rstrip("/")
+    if not root_norm:
+        return None
+    path_lower = path_norm.casefold()
+    root_lower = root_norm.casefold()
+    if path_lower == root_lower:
+        return ""
+    prefix = root_lower + "/"
+    if not path_lower.startswith(prefix):
+        return None
+    return path_norm[len(root_norm) + 1 :]
 
 
 if __name__ == "__main__":

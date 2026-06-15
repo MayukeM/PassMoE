@@ -34,7 +34,10 @@ def main() -> None:
     parser.add_argument(
         "--base-adapter",
         default=None,
-        help="'none', 'fielddrop', 'baseline10k', 'csdn', or a LoRA adapter directory.",
+        help=(
+            "'none', 'fielddrop', 'baseline10k', 'csdn', or a LoRA adapter directory. "
+            "'fielddrop' is an imported PassLLM/FieldDrop baseline adapter, not a PassMoE method component."
+        ),
     )
     parser.add_argument("--task", choices=["trawling", "targeted"], default=None)
     parser.add_argument("--prompt-template-id", default=None)

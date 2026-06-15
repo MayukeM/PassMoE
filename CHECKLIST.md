@@ -106,6 +106,11 @@
 - [x] default-off router specialization objective added, using batch-balanced PII-priority / leet-priority / entropy-fallback weak labels.
 - [x] `main.py analyze-specialization` and `scripts/analyze_expert_specialization.py` added for per-bucket expert routing diagnostics.
 - [x] tiny CPU expert-specialization diagnostic completed: untrained top-1 agreement `0.2813`; trained `tiny_router_specialization_priority_smoke` top-1 agreement `1.0000` on 64 records, with PII/entropy/leet buckets routed to their intended experts.
+- [x] standalone formal helper defaults now point to `qwen_fielddrop_base_identity_clixsense_500_raw` instead of the historical trained-residual route.
+- [x] `validate_formal_outputs.py` now infers whether fused artifacts are required from `run_manifest.json`, so the current raw-only formal run validates with the default command.
+- [x] status, validation, report, and CUDA readiness tools now remap repo-owned manifest paths from an old repo root to the current checkout before checking hashes/provenance.
+- [x] README now has an explicit evidence-status section separating supported SR@K claims, negative residual-training results, fusion diagnostics, router-specialization diagnostics, and the FieldDrop boundary.
+- [x] `scripts/repro_check.py` added for lightweight repository self-audit before publishing or sharing a commit.
 
 ## Implementation
 
@@ -122,6 +127,7 @@
 - [x] `scripts/inspect_formal_status.py` added.
 - [x] `scripts/render_formal_report.py` added.
 - [x] `scripts/check_cuda_readiness.py` added.
+- [x] `scripts/repro_check.py` added.
 - [x] `scripts/run_formal_passmoe.py` added.
 - [x] `scripts/validate_formal_outputs.py` added.
 - [x] recovery/resume support added to `trainer.py`, `main.py`, `model.py`, `evaluate.py`, and `scripts/run_formal_passmoe.py`.

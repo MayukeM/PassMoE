@@ -9,7 +9,8 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / "qwen_fielddrop_passmoe_clixsense_10k"
+DEFAULT_FORMAL_RUN_NAME = "qwen_fielddrop_base_identity_clixsense_500_raw"
+DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / DEFAULT_FORMAL_RUN_NAME
 PROGRESS_MARKER_PREFIX = "__PASSMOE_PROGRESS__"
 
 
@@ -43,19 +44,19 @@ def inspect_formal_status(artifacts_dir: Path) -> dict[str, Any]:
     validation = load_json_if_exists(validation_path)
     score = load_json_if_exists(score_path)
 
-    environment_snapshot_path = Path(str(manifest.get("environment_snapshot_path", ""))) if manifest else artifacts_dir / "environment_snapshot.json"
-    cuda_readiness_path = Path(str(manifest.get("cuda_readiness_path", ""))) if manifest else artifacts_dir / "cuda_readiness.json"
-    expected_jsonl = Path(str(manifest.get("expected_jsonl", ""))) if manifest else Path()
-    expected_fused_jsonl = Path(str(manifest.get("expected_fused_jsonl", ""))) if manifest else Path()
-    run_dir = Path(str(manifest.get("run_dir", ""))) if manifest else Path()
+    environment_snapshot_path = manifest_repo_path(manifest, "environment_snapshot_path", artifacts_dir / "environment_snapshot.json")
+    cuda_readiness_path = manifest_repo_path(manifest, "cuda_readiness_path", artifacts_dir / "cuda_readiness.json")
+    expected_jsonl = manifest_repo_path(manifest, "expected_jsonl")
+    expected_fused_jsonl = manifest_repo_path(manifest, "expected_fused_jsonl")
+    run_dir = manifest_repo_path(manifest, "run_dir")
     expected_rows = infer_expected_rows(manifest, validation)
     raw_rows = count_jsonl_rows(expected_jsonl) if expected_jsonl else None
     fused_rows = count_jsonl_rows(expected_fused_jsonl) if expected_fused_jsonl else None
-    logs_dir = Path(str(manifest.get("command_logs_dir", ""))) if manifest else artifacts_dir / "logs"
+    logs_dir = manifest_repo_path(manifest, "command_logs_dir", artifacts_dir / "logs")
     logs = inspect_logs(logs_dir)
     targeted_generation_progress = inspect_progress_markers(logs_dir)
     checkpoints = inspect_checkpoints(run_dir)
-    validation_hash_status = inspect_validation_hashes(validation)
+    validation_hash_status = inspect_validation_hashes(validation, manifest)
     model_execution_provenance = inspect_model_execution_provenance(manifest, expected_jsonl, expected_rows)
     manifest_path_audit = inspect_manifest_path_audit(manifest, artifacts_dir)
 
@@ -248,7 +249,7 @@ def quote_command_arg(arg: str) -> str:
     return arg
 
 
-def inspect_validation_hashes(validation: dict[str, Any]) -> dict[str, Any]:
+def inspect_validation_hashes(validation: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
     if not validation:
         return {"status": "missing", "reason": "formal_validation.json is missing"}
     hashes = validation.get("artifact_hashes")
@@ -262,7 +263,7 @@ def inspect_validation_hashes(validation: dict[str, Any]) -> dict[str, Any]:
             continue
         if not expected.get("exists", False):
             continue
-        path = Path(str(expected.get("path", "")))
+        path = relocate_manifest_path(expected.get("path", ""), manifest)
         if not path.exists():
             missing.append({"artifact": name, "path": str(path)})
             continue
@@ -301,10 +302,11 @@ def inspect_manifest_path_audit(manifest: dict[str, Any], artifacts_dir: Path) -
     manifest_repo_root = str(manifest.get("repo_root", ""))
     manifest_repo_root_norm = normalize_path_text(Path(manifest_repo_root)) if manifest_repo_root else ""
     repo_root_matches = bool(manifest_repo_root_norm and manifest_repo_root_norm == current_repo_root)
-    artifacts_dir_matches = path_text_matches(manifest.get("artifacts_dir", ""), artifacts_dir)
+    relocated_artifacts_dir = relocate_manifest_path(manifest.get("artifacts_dir", ""), manifest)
+    artifacts_dir_matches = path_text_matches(str(relocated_artifacts_dir), artifacts_dir)
     repo_owned_mismatches = repo_owned_path_mismatches(manifest, current_repo_root)
-    status = "passed" if repo_root_matches and artifacts_dir_matches and not repo_owned_mismatches else "stale"
-    reason = "manifest paths match current repo root"
+    status = "passed" if artifacts_dir_matches and not repo_owned_mismatches else "stale"
+    reason = "manifest paths match current repo root" if repo_root_matches else "manifest repo-owned paths are relocatable to current repo root"
     if status == "stale":
         reason = (
             f"manifest repo_root={manifest_repo_root or 'missing'}; "
@@ -317,6 +319,7 @@ def inspect_manifest_path_audit(manifest: dict[str, Any], artifacts_dir: Path) -
         "manifest_repo_root": manifest_repo_root,
         "repo_root_matches": repo_root_matches,
         "artifacts_dir_matches": artifacts_dir_matches,
+        "relocated_artifacts_dir": str(relocated_artifacts_dir),
         "repo_owned_mismatches": repo_owned_mismatches[:50],
     }
 
@@ -344,15 +347,19 @@ def repo_owned_path_mismatches(manifest: dict[str, Any], current_repo_root: str)
     mismatches: list[dict[str, str]] = []
     for key in sorted(repo_keys):
         value = manifest.get(key)
-        if isinstance(value, str) and looks_like_absolute_path(value) and not normalize_path_text(Path(value)).startswith(current_repo_root):
-            mismatches.append({"key": key, "path": value})
+        if isinstance(value, str) and looks_like_absolute_path(value):
+            relocated = relocate_manifest_path(value, manifest)
+            if relocated and not normalize_path_text(relocated).startswith(current_repo_root):
+                mismatches.append({"key": key, "path": value, "relocated": str(relocated)})
     for group_key in ("length_audit_paths",):
         group = manifest.get(group_key, {})
         if not isinstance(group, dict):
             continue
         for key, value in group.items():
-            if isinstance(value, str) and looks_like_absolute_path(value) and not normalize_path_text(Path(value)).startswith(current_repo_root):
-                mismatches.append({"key": f"{group_key}.{key}", "path": value})
+            if isinstance(value, str) and looks_like_absolute_path(value):
+                relocated = relocate_manifest_path(value, manifest)
+                if relocated and not normalize_path_text(relocated).startswith(current_repo_root):
+                    mismatches.append({"key": f"{group_key}.{key}", "path": value, "relocated": str(relocated)})
     return mismatches
 
 
@@ -363,7 +370,9 @@ def path_text_matches(left: Any, right: Path) -> bool:
 
 
 def looks_like_absolute_path(value: str) -> bool:
-    return Path(value).is_absolute()
+    if not value:
+        return False
+    return Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)) or value.startswith("/")
 
 
 def normalize_path_text(path: Path) -> str:
@@ -390,7 +399,7 @@ def inspect_model_execution_provenance(
     is_cpu_diagnostic = manifest.get("device") == "cpu"
     is_subset = bool(baseline_n and expected_rows and expected_rows != baseline_n)
     required = bool(not is_score_only and not is_cpu_diagnostic and not is_subset)
-    run_dir = Path(str(manifest.get("run_dir", "")))
+    run_dir = manifest_repo_path(manifest, "run_dir")
     metrics_path = run_dir / "targeted_generation_metrics.json" if run_dir else Path()
     if not required:
         return {
@@ -425,7 +434,7 @@ def inspect_model_execution_provenance(
     max_budget = max(budgets) if budgets else 0
     if max_budget and candidates_per_user < max_budget:
         errors.append({"error": "candidate_budget", "required": max_budget, "observed": candidates_per_user})
-    result_path = Path(str(metrics.get("result_path", "")))
+    result_path = relocate_manifest_path(metrics.get("result_path", ""), manifest)
     if result_path and expected_jsonl:
         try:
             if result_path.resolve() != expected_jsonl.resolve():
@@ -568,7 +577,7 @@ def count_jsonl_rows(path: Path) -> int | None:
 
 
 def path_info(path: Path) -> dict[str, Any]:
-    if not path:
+    if not path or str(path) in {"", "."}:
         return {"exists": False, "path": ""}
     return {
         "exists": path.exists(),
@@ -578,7 +587,7 @@ def path_info(path: Path) -> dict[str, Any]:
 
 
 def load_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
@@ -588,6 +597,45 @@ def resolve_path(path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return (REPO_ROOT / candidate).resolve()
+
+
+def manifest_repo_path(manifest: dict[str, Any], key: str, fallback: Path | None = None) -> Path:
+    if not manifest:
+        return fallback or Path()
+    path = relocate_manifest_path(manifest.get(key, ""), manifest)
+    if str(path) in {"", "."} and fallback is not None:
+        return fallback
+    return path
+
+
+def relocate_manifest_path(value: Any, manifest: dict[str, Any]) -> Path:
+    text = str(value or "")
+    if not text:
+        return Path()
+    candidate = Path(text)
+    if candidate.exists():
+        return candidate
+    relative = relative_to_manifest_root(text, str(manifest.get("repo_root", "")))
+    if relative is not None:
+        return (REPO_ROOT / Path(*relative.split("/"))).resolve()
+    return candidate
+
+
+def relative_to_manifest_root(path_text: str, root_text: str) -> str | None:
+    if not path_text or not root_text:
+        return None
+    path_norm = path_text.replace("\\", "/").rstrip("/")
+    root_norm = root_text.replace("\\", "/").rstrip("/")
+    if not root_norm:
+        return None
+    path_lower = path_norm.casefold()
+    root_lower = root_norm.casefold()
+    if path_lower == root_lower:
+        return ""
+    prefix = root_lower + "/"
+    if not path_lower.startswith(prefix):
+        return None
+    return path_norm[len(root_norm) + 1 :]
 
 
 if __name__ == "__main__":

@@ -102,6 +102,34 @@ PassMoE and FieldDrop are deliberately separated in this repository:
   generation, and optional conservative fusion implemented in this repository.
 - Any paper-facing claim must not describe FieldDrop as a PassMoE contribution.
 
+## Evidence Status
+
+Current supported claim:
+
+- the reproducible formal route is
+  `qwen_fielddrop_base_identity_clixsense_500_raw`;
+- it uses the imported FieldDrop adapter only as a frozen PassLLM foundation;
+- it preserves the PassMoE expert path as an identity residual at initialization;
+- it runs raw targeted generation with `--epochs 0 --no-post-fusion`;
+- on the 500-row `fd500k_p00_unique` contract, SR@10/SR@50/SR@100 are above the
+  imported FieldDrop baseline, while SR@1 is lower.
+
+Current unsupported or diagnostic-only claims:
+
+- supervised low-rank residual PassMoE training has not been shown to improve
+  the FieldDrop foundation in the measured formal runs;
+- score-only fusion over existing PassLLM output is supplementary, not a full
+  neural PassMoE comparison;
+- the router specialization result is mechanism evidence only, not an SR@K
+  performance result;
+- FieldDrop is not a PassMoE component or contribution.
+
+Run the lightweight repository audit before publishing or sharing a new commit:
+
+```bash
+python scripts/repro_check.py
+```
+
 ## Expert Specialization Diagnostic
 
 The default formal route leaves this off. For mechanism evidence only, PassMoE
@@ -151,7 +179,7 @@ targeted generation, scores raw `targeted_input_output.jsonl`, and writes a
 compact result report to:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/
 ```
 
 The default formal comparison is now aligned to the local PassLLM quick anchor:
@@ -207,14 +235,14 @@ python scripts/run_formal_passmoe.py
 The preflight writes a CUDA handoff script at:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/run_formal_cuda.ps1
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/run_formal_cuda.ps1
 ```
 
 On a CUDA host with the Python environment active, run that script from
 PowerShell to execute the formal runner and then refresh status/report:
 
 ```powershell
-.\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1
+.\artifacts\formal\qwen_fielddrop_base_identity_clixsense_500_raw\run_formal_cuda.ps1
 ```
 
 The default direct command now reproduces the current validated
@@ -240,7 +268,7 @@ adapter files before gating on CUDA. It also builds the Qwen backbone with the
 external FieldDrop adapter on CPU by default and writes:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/deep_model_check.json
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/deep_model_check.json
 ```
 
 The current deep check reports `72` merged LoRA modules, `0` skipped modules,
@@ -299,8 +327,8 @@ Preflight also audits targeted prompt/password token coverage for both formal
 evaluation targets and training samples:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/targeted_length_audit.json
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/targeted_length_audit_train.json
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/targeted_length_audit.json
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/targeted_length_audit_train.json
 ```
 
 Current Qwen results at `--max-length 256` are zero-valid/truncated `0/500` on
@@ -320,19 +348,19 @@ Recovery commands for interrupted formal runs:
 python scripts/inspect_formal_status.py --artifacts-dir artifacts\formal\qwen_fielddrop_base_identity_clixsense_500_raw
 
 # Continue training from the last checkpoint; --epochs is the target total epoch count.
-python scripts/run_formal_passmoe.py --execute --resume-from runs\qwen_fielddrop_passmoe_clixsense_10k\last.pt
+python scripts/run_formal_passmoe.py --execute --resume-from runs\qwen_fielddrop_base_identity_clixsense_500_raw\last.pt
 
 # If training finished but generation/scoring failed, generate JSONL from a checkpoint.
-python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\best.pt
+python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_base_identity_clixsense_500_raw\best.pt
 
 # If targeted generation was interrupted, reuse completed JSONL rows and append missing rows.
-python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\best.pt --resume-generation
+python scripts/run_formal_passmoe.py --execute --checkpoint runs\qwen_fielddrop_base_identity_clixsense_500_raw\best.pt --resume-generation
 
 # If targeted_input_output.jsonl already exists, skip model execution and only score/fuse.
 python scripts/run_formal_passmoe.py --execute --skip-train-if-jsonl-exists --force
 
 # Explicit post-processing alias for an arbitrary JSONL.
-python scripts/run_formal_passmoe.py --postprocess-only --jsonl runs\qwen_fielddrop_passmoe_clixsense_10k\targeted_input_output.jsonl --force
+python scripts/run_formal_passmoe.py --postprocess-only --jsonl runs\qwen_fielddrop_base_identity_clixsense_500_raw\targeted_input_output.jsonl --force
 ```
 
 The status inspector reads `run_manifest.json`, `preflight.json`, expected
@@ -342,6 +370,10 @@ classifies states such as `needs_model_execution`, `partial_generation`,
 recommended command. It only returns `complete` when the required JSONL,
 manifest-selected score/fusion artifacts, and a passed `formal_validation.json`
 are all present, so a stale validation file cannot mask missing outputs.
+If an artifact was generated under another repo root, repo-owned manifest paths
+are remapped to the current checkout before status, validation, hashes, and
+model-execution provenance are checked. External model/checkpoint paths remain
+provenance only and are not rewritten as PassMoE code paths.
 
 To render a concise paper-facing status/result report from the same artifacts:
 
@@ -408,14 +440,14 @@ from a PassMoE model generation step; otherwise it reports
 `model_execution_unverified`. The default report paths are:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_validation.json
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_validation.md
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/formal_validation.json
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/formal_validation.md
 ```
 
 Every formal subcommand is also logged under:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/logs/
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/logs/
 ```
 
 `run_manifest.json` records this as `command_logs_dir`. The logs include the
@@ -445,7 +477,7 @@ reports `not_ready` because PyTorch is CPU-only and `nvidia-smi` only exposes a
 2 GB GeForce MX250. Run it directly with:
 
 ```bash
-python scripts/check_cuda_readiness.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+python scripts/check_cuda_readiness.py --artifacts-dir artifacts\formal\qwen_fielddrop_base_identity_clixsense_500_raw
 ```
 
 The runner also writes `formal_result_report.md` and
@@ -590,7 +622,7 @@ python main.py generate --checkpoint runs\smoke_tiny_debug\best.pt --num-passwor
 Direct training resume is also supported:
 
 ```bash
-python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --prompt-template-id 0 --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --max-train-samples 10000 --epochs 4 --resume-checkpoint runs\qwen_fielddrop_passmoe_clixsense_10k\last.pt --max-length 256 --generation-max-new-tokens 32 --generation-batch-size 32 --run-name qwen_fielddrop_passmoe_clixsense_10k
+python main.py train --task targeted --base-model local-qwen --base-adapter fielddrop --prompt-template-id 0 --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --max-train-samples 10000 --epochs 4 --resume-checkpoint runs\qwen_fielddrop_base_identity_clixsense_500_raw\last.pt --max-length 256 --generation-max-new-tokens 32 --generation-batch-size 32 --run-name qwen_fielddrop_base_identity_clixsense_500_raw
 ```
 
 Current checkpoints use compact `passmoe_trainable_state_v2` format. For Qwen,
@@ -656,8 +688,8 @@ baselines/imported/passllm-fielddrop/json/metric_contract.json
 
 ## Current Caveat
 
-The current machine reports CPU-only PyTorch. The Qwen path is functional, but a
-paper-facing SR@K comparison against the PassLLM FieldDrop baseline should be
-run on GPU. Keep the method boundary clear: FieldDrop is the comparison /
-initialization baseline, while PassMoE is the router/expert/fusion layer being
-tested here.
+Some local machines may report CPU-only PyTorch. They can still run smoke tests,
+preflight, status, report, and `scripts/repro_check.py`, but regenerating the
+500-row Qwen/FieldDrop formal comparison needs a CUDA host. Keep the method
+boundary clear: FieldDrop is the comparison / initialization baseline, while
+PassMoE is the router/expert/fusion layer being tested here.

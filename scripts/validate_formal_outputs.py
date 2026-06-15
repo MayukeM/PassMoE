@@ -4,13 +4,15 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / "qwen_fielddrop_passmoe_clixsense_10k"
+DEFAULT_FORMAL_RUN_NAME = "qwen_fielddrop_base_identity_clixsense_500_raw"
+DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / DEFAULT_FORMAL_RUN_NAME
 DEFAULT_BASELINE_CONTRACT = REPO_ROOT / "baselines" / "imported" / "passllm-fielddrop" / "json" / "metric_contract.json"
 
 
@@ -28,12 +30,23 @@ def main() -> None:
         default=-1,
         help="Minimum raw candidates per row. Default: max budget; use 0 for diagnostics.",
     )
-    parser.add_argument("--no-require-fused", dest="require_fused", action="store_false")
+    parser.add_argument(
+        "--require-fused",
+        dest="require_fused",
+        action="store_true",
+        default=None,
+        help="Require fused JSONL/score artifacts. Default: infer from run_manifest.json post_fusion.",
+    )
+    parser.add_argument(
+        "--no-require-fused",
+        dest="require_fused",
+        action="store_false",
+        help="Do not require fused artifacts; use for raw-only formal runs.",
+    )
     parser.add_argument("--allow-fusion-worsening", action="store_true")
     parser.add_argument("--out-json", default="")
     parser.add_argument("--out-md", default="")
     parser.add_argument("--no-fail-on-invalid", action="store_true")
-    parser.set_defaults(require_fused=True)
     args = parser.parse_args()
 
     artifacts_dir = resolve_path(args.artifacts_dir)
@@ -78,13 +91,14 @@ def validate_formal_outputs(args: argparse.Namespace, artifacts_dir: Path) -> di
     fused_score = load_json_if_exists(fused_score_path)
     fused_comparison = load_json_if_exists(fused_comparison_path)
     fusion_analysis = load_json_if_exists(fusion_analysis_path)
+    require_fused = infer_require_fused(args, manifest)
 
     check("artifacts_dir", artifacts_dir.exists(), str(artifacts_dir))
     check("manifest_exists", bool(manifest), str(manifest_path))
     check("preflight_exists", bool(preflight), str(preflight_path), severity="warning")
     check("score_exists", bool(score), str(score_path))
     check("comparison_exists", bool(comparison), str(comparison_path))
-    if args.require_fused:
+    if require_fused:
         check("fused_score_exists", bool(fused_score), str(fused_score_path))
         check("fused_comparison_exists", bool(fused_comparison), str(fused_comparison_path))
         check("fusion_analysis_exists", bool(fusion_analysis), str(fusion_analysis_path))
@@ -139,8 +153,8 @@ def validate_formal_outputs(args: argparse.Namespace, artifacts_dir: Path) -> di
                 f"merged={merge_report.get('merged_modules')}, skipped={merge_report.get('skipped_modules')}",
             )
 
-    expected_jsonl = Path(str(manifest.get("expected_jsonl", ""))) if manifest else Path()
-    expected_fused_jsonl = Path(str(manifest.get("expected_fused_jsonl", ""))) if manifest else Path()
+    expected_jsonl = manifest_repo_path(manifest, "expected_jsonl")
+    expected_fused_jsonl = manifest_repo_path(manifest, "expected_fused_jsonl")
     raw_rows = load_jsonl_if_exists(expected_jsonl)
     fused_rows = load_jsonl_if_exists(expected_fused_jsonl)
     validate_score("raw", score, comparison, baseline_metrics, budgets, expected_rows, check)
@@ -149,7 +163,7 @@ def validate_formal_outputs(args: argparse.Namespace, artifacts_dir: Path) -> di
     else:
         check("raw_jsonl_exists", False, str(expected_jsonl))
 
-    if args.require_fused:
+    if require_fused:
         validate_score("fused", fused_score, fused_comparison, baseline_metrics, budgets, expected_rows, check)
         if fused_rows is not None:
             validate_jsonl_rows("fused_jsonl", fused_rows, expected_rows, 0, check)
@@ -178,6 +192,7 @@ def validate_formal_outputs(args: argparse.Namespace, artifacts_dir: Path) -> di
         "expected_baseline_variant": args.expected_baseline_variant,
         "budgets": budgets,
         "min_candidates": min_candidates,
+        "require_fused": require_fused,
         "primary_metric": primary_metric,
         "primary": {
             "baseline": baseline_primary,
@@ -187,21 +202,44 @@ def validate_formal_outputs(args: argparse.Namespace, artifacts_dir: Path) -> di
             "fused_delta": numeric_delta(fused_primary, baseline_primary),
         },
         "artifact_hashes": build_artifact_hashes(
-            {
-                "raw_jsonl": expected_jsonl,
-                "score": artifacts_dir / "score.json",
-                "comparison": artifacts_dir / "comparison.json",
-                "fused_jsonl": expected_fused_jsonl,
-                "fused_score": artifacts_dir / "fused_score.json",
-                "fused_comparison": artifacts_dir / "fused_comparison.json",
-                "fusion_analysis": artifacts_dir / "fusion_analysis.json",
-            }
+            validation_artifact_paths(artifacts_dir, expected_jsonl, expected_fused_jsonl, require_fused)
         ),
         "checks": checks,
         "errors": errors,
         "warnings": warnings,
         "manifest_path_audit": manifest_path_audit,
     }
+
+
+def infer_require_fused(args: argparse.Namespace, manifest: dict[str, Any]) -> bool:
+    if args.require_fused is not None:
+        return bool(args.require_fused)
+    if manifest:
+        return bool(manifest.get("post_fusion", True))
+    return True
+
+
+def validation_artifact_paths(
+    artifacts_dir: Path,
+    expected_jsonl: Path,
+    expected_fused_jsonl: Path,
+    require_fused: bool,
+) -> dict[str, Path]:
+    paths = {
+        "raw_jsonl": expected_jsonl,
+        "score": artifacts_dir / "score.json",
+        "comparison": artifacts_dir / "comparison.json",
+    }
+    if require_fused:
+        paths.update(
+            {
+                "fused_jsonl": expected_fused_jsonl,
+                "fused_score": artifacts_dir / "fused_score.json",
+                "fused_comparison": artifacts_dir / "fused_comparison.json",
+                "fusion_analysis": artifacts_dir / "fusion_analysis.json",
+            }
+        )
+    return paths
 
 
 def validate_score(
@@ -282,10 +320,11 @@ def build_manifest_path_audit(manifest: dict[str, Any], artifacts_dir: Path) -> 
     manifest_repo_root = str(manifest.get("repo_root", ""))
     manifest_repo_root_norm = normalize_path_text(Path(manifest_repo_root)) if manifest_repo_root else ""
     repo_root_matches = bool(manifest_repo_root_norm and manifest_repo_root_norm == current_repo_root)
-    artifacts_dir_matches = path_text_matches(manifest.get("artifacts_dir", ""), artifacts_dir)
+    relocated_artifacts_dir = relocate_manifest_path(manifest.get("artifacts_dir", ""), manifest)
+    artifacts_dir_matches = path_text_matches(str(relocated_artifacts_dir), artifacts_dir)
     repo_owned_mismatches = repo_owned_path_mismatches(manifest, current_repo_root)
-    status = "passed" if repo_root_matches and artifacts_dir_matches and not repo_owned_mismatches else "stale"
-    reason = "manifest paths match current repo root"
+    status = "passed" if artifacts_dir_matches and not repo_owned_mismatches else "stale"
+    reason = "manifest paths match current repo root" if repo_root_matches else "manifest repo-owned paths are relocatable to current repo root"
     if status == "stale":
         reason = (
             f"manifest repo_root={manifest_repo_root or 'missing'}; "
@@ -298,6 +337,7 @@ def build_manifest_path_audit(manifest: dict[str, Any], artifacts_dir: Path) -> 
         "manifest_repo_root": manifest_repo_root,
         "repo_root_matches": repo_root_matches,
         "artifacts_dir_matches": artifacts_dir_matches,
+        "relocated_artifacts_dir": str(relocated_artifacts_dir),
         "repo_owned_mismatches": repo_owned_mismatches[:50],
     }
 
@@ -325,16 +365,62 @@ def repo_owned_path_mismatches(manifest: dict[str, Any], current_repo_root: str)
     mismatches: list[dict[str, str]] = []
     for key in sorted(repo_keys):
         value = manifest.get(key)
-        if isinstance(value, str) and Path(value).is_absolute() and not normalize_path_text(Path(value)).startswith(current_repo_root):
-            mismatches.append({"key": key, "path": value})
+        if isinstance(value, str) and looks_like_absolute_path(value):
+            relocated = relocate_manifest_path(value, manifest)
+            if relocated and not normalize_path_text(relocated).startswith(current_repo_root):
+                mismatches.append({"key": key, "path": value, "relocated": str(relocated)})
     for group_key in ("length_audit_paths",):
         group = manifest.get(group_key, {})
         if not isinstance(group, dict):
             continue
         for key, value in group.items():
-            if isinstance(value, str) and Path(value).is_absolute() and not normalize_path_text(Path(value)).startswith(current_repo_root):
-                mismatches.append({"key": f"{group_key}.{key}", "path": value})
+            if isinstance(value, str) and looks_like_absolute_path(value):
+                relocated = relocate_manifest_path(value, manifest)
+                if relocated and not normalize_path_text(relocated).startswith(current_repo_root):
+                    mismatches.append({"key": f"{group_key}.{key}", "path": value, "relocated": str(relocated)})
     return mismatches
+
+
+def manifest_repo_path(manifest: dict[str, Any], key: str) -> Path:
+    if not manifest:
+        return Path()
+    return relocate_manifest_path(manifest.get(key, ""), manifest)
+
+
+def relocate_manifest_path(value: Any, manifest: dict[str, Any]) -> Path:
+    text = str(value or "")
+    if not text:
+        return Path()
+    candidate = Path(text)
+    if candidate.exists():
+        return candidate
+    relative = relative_to_manifest_root(text, str(manifest.get("repo_root", "")))
+    if relative is not None:
+        return (REPO_ROOT / Path(*relative.split("/"))).resolve()
+    return candidate
+
+
+def relative_to_manifest_root(path_text: str, root_text: str) -> str | None:
+    if not path_text or not root_text:
+        return None
+    path_norm = path_text.replace("\\", "/").rstrip("/")
+    root_norm = root_text.replace("\\", "/").rstrip("/")
+    if not root_norm:
+        return None
+    path_lower = path_norm.casefold()
+    root_lower = root_norm.casefold()
+    if path_lower == root_lower:
+        return ""
+    prefix = root_lower + "/"
+    if not path_lower.startswith(prefix):
+        return None
+    return path_norm[len(root_norm) + 1 :]
+
+
+def looks_like_absolute_path(value: str) -> bool:
+    if not value:
+        return False
+    return Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value)) or value.startswith("/")
 
 
 def path_text_matches(left: Any, right: Path) -> bool:
@@ -518,7 +604,7 @@ def format_number(value: Any, signed: bool = False) -> str:
 
 
 def load_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8-sig"))
 

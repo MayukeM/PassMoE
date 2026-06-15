@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_FORMAL_RUN_NAME = "qwen_fielddrop_base_identity_clixsense_500_raw"
 DEFAULT_DATA_PATH = "data/clixsense/clixsense_train_50_no_fd500k_targets.jsonl"
 DEFAULT_TEST_DATA_PATH = "data/clixsense/clixsense_test_500_from_fd500k_p00.json"
 DEFAULT_BASELINE_CONTRACT = "baselines/imported/passllm-fielddrop/json/metric_contract.json"
@@ -33,7 +34,7 @@ def main() -> None:
             "PassLLM baseline/foundation adapter, not a PassMoE method component."
         )
     )
-    parser.add_argument("--run-name", default="qwen_fielddrop_base_identity_clixsense_500_raw")
+    parser.add_argument("--run-name", default=DEFAULT_FORMAL_RUN_NAME)
     parser.add_argument("--data-path", default=DEFAULT_DATA_PATH)
     parser.add_argument("--test-data-path", default=DEFAULT_TEST_DATA_PATH)
     parser.add_argument("--output-dir", default="runs")
@@ -1542,7 +1543,7 @@ def build_runner_command_from_manifest(manifest: dict[str, Any]) -> list[str]:
         "scripts/run_formal_passmoe.py",
         "--execute",
         "--run-name",
-        str(manifest.get("run_name", "qwen_fielddrop_passmoe_clixsense_10k")),
+        str(manifest.get("run_name", DEFAULT_FORMAL_RUN_NAME)),
         "--artifacts-dir",
         artifacts_parent_arg(manifest),
         "--baseline-contract",
@@ -1658,7 +1659,7 @@ def artifacts_parent_arg(manifest: dict[str, Any]) -> str:
 
 
 def artifacts_dir_arg(manifest: dict[str, Any]) -> str:
-    return repo_relative_arg(manifest.get("artifacts_dir", "artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k"))
+    return repo_relative_arg(manifest.get("artifacts_dir", f"artifacts/formal/{DEFAULT_FORMAL_RUN_NAME}"))
 
 
 def repo_relative_arg(value: Any) -> str:

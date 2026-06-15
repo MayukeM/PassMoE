@@ -8,12 +8,13 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / "qwen_fielddrop_passmoe_clixsense_10k"
+DEFAULT_FORMAL_RUN_NAME = "qwen_fielddrop_base_identity_clixsense_500_raw"
+DEFAULT_ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "formal" / DEFAULT_FORMAL_RUN_NAME
 
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from inspect_formal_status import inspect_formal_status  # noqa: E402
+from inspect_formal_status import inspect_formal_status, relocate_manifest_path  # noqa: E402
 
 
 def main() -> None:
@@ -41,7 +42,9 @@ def build_report(artifacts_dir: Path) -> dict[str, Any]:
     comparison = load_json_if_exists(artifacts_dir / "comparison.json")
     fused_comparison = load_json_if_exists(artifacts_dir / "fused_comparison.json")
     fusion_analysis = load_json_if_exists(artifacts_dir / "fusion_analysis.json")
-    cuda_readiness = load_json_if_exists(Path(str(manifest.get("cuda_readiness_path", "")))) if manifest else load_json_if_exists(artifacts_dir / "cuda_readiness.json")
+    cuda_readiness_path = relocate_manifest_path(manifest.get("cuda_readiness_path", ""), manifest) if manifest else artifacts_dir / "cuda_readiness.json"
+    environment_snapshot_path = relocate_manifest_path(manifest.get("environment_snapshot_path", ""), manifest) if manifest else artifacts_dir / "environment_snapshot.json"
+    cuda_readiness = load_json_if_exists(cuda_readiness_path)
 
     budgets = [int(item) for item in manifest.get("budgets", [])] if manifest else []
     primary_budget = max(budgets) if budgets else 100
@@ -126,8 +129,8 @@ def build_report(artifacts_dir: Path) -> dict[str, Any]:
         "paths": {
             "summary": str(artifacts_dir / "summary.md"),
             "validation": str(artifacts_dir / "formal_validation.json"),
-            "environment_snapshot": manifest.get("environment_snapshot_path") if manifest else str(artifacts_dir / "environment_snapshot.json"),
-            "cuda_readiness": manifest.get("cuda_readiness_path") if manifest else str(artifacts_dir / "cuda_readiness.json"),
+            "environment_snapshot": str(environment_snapshot_path),
+            "cuda_readiness": str(cuda_readiness_path),
             "status": str(artifacts_dir / "formal_result_report.json"),
         },
     }
