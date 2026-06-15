@@ -14,6 +14,7 @@ from tqdm import tqdm
 from config import Config
 from data import PasswordRecord, format_targeted_prompt
 from trainer import batch_loss_weight, move_batch
+from model import router_specialization_target_distribution
 
 
 @torch.no_grad()
@@ -21,16 +22,24 @@ def evaluate_loss(model: torch.nn.Module, loader: DataLoader, device: str | torc
     model.eval()
     device = torch.device(device)
     total_loss = 0.0
+    total_objective_loss = 0.0
     total_items = 0
     for batch in loader:
         batch = move_batch(batch, device)
         outputs = model(**batch)
-        loss = outputs["loss"]
+        objective_loss = outputs["loss"]
+        loss = outputs.get("lm_loss", objective_loss)
         weight = batch_loss_weight(outputs, batch)
         total_loss += float(loss.detach().cpu()) * weight
+        total_objective_loss += float(objective_loss.detach().cpu()) * weight
         total_items += weight
     avg_loss = total_loss / max(total_items, 1)
-    return {"loss": avg_loss, "perplexity": float(math.exp(min(avg_loss, 20.0))), "valid_tokens": total_items}
+    return {
+        "loss": avg_loss,
+        "objective_loss": total_objective_loss / max(total_items, 1),
+        "perplexity": float(math.exp(min(avg_loss, 20.0))),
+        "valid_tokens": total_items,
+    }
 
 
 @torch.no_grad()
@@ -372,6 +381,12 @@ def evaluate_router_distribution(
 ) -> dict[str, Any]:
     device = torch.device(device)
     totals = torch.zeros(3)
+    bucket_totals: dict[str, torch.Tensor] = {}
+    bucket_counts: dict[str, int] = {}
+    bucket_top1: dict[str, dict[int, int]] = {}
+    top1_counts = torch.zeros(3)
+    target_counts = torch.zeros(3)
+    specialization_matches = 0
     count = 0
     model.eval()
     with torch.no_grad():
@@ -379,11 +394,56 @@ def evaluate_router_distribution(
             batch = move_batch(batch, device)
             outputs = model(**batch)
             weights = outputs["expert_weights"].detach().cpu()
+            features = batch["features"].detach().cpu()
+            target_index, _target_probs = router_specialization_target_distribution(features)
+            top_index = weights.argmax(dim=-1)
             totals += weights.sum(dim=0)
+            top1_counts += torch.bincount(top_index, minlength=3).float()
+            target_counts += torch.bincount(target_index, minlength=3).float()
+            specialization_matches += int(top_index.eq(target_index).sum().item())
             count += weights.size(0)
+            for row_weights, row_top, row_target in zip(weights, top_index, target_index):
+                bucket = expert_name(int(row_target.item()))
+                if bucket not in bucket_totals:
+                    bucket_totals[bucket] = torch.zeros(3)
+                    bucket_counts[bucket] = 0
+                    bucket_top1[bucket] = {0: 0, 1: 0, 2: 0}
+                bucket_totals[bucket] += row_weights
+                bucket_counts[bucket] += 1
+                bucket_top1[bucket][int(row_top.item())] += 1
     avg = (totals / max(count, 1)).tolist()
+    bucket_metrics = {}
+    for bucket in sorted(bucket_totals):
+        bucket_avg = (bucket_totals[bucket] / max(bucket_counts[bucket], 1)).tolist()
+        top_counts = bucket_top1[bucket]
+        bucket_metrics[bucket] = {
+            "count": bucket_counts[bucket],
+            "avg_pii_expert_weight": bucket_avg[0],
+            "avg_entropy_expert_weight": bucket_avg[1],
+            "avg_leet_expert_weight": bucket_avg[2],
+            "top_pii_expert_fraction": top_counts[0] / max(bucket_counts[bucket], 1),
+            "top_entropy_expert_fraction": top_counts[1] / max(bucket_counts[bucket], 1),
+            "top_leet_expert_fraction": top_counts[2] / max(bucket_counts[bucket], 1),
+        }
     return {
         "avg_pii_expert_weight": avg[0],
         "avg_entropy_expert_weight": avg[1],
         "avg_leet_expert_weight": avg[2],
+        "num_records": count,
+        "specialization_top1_agreement": specialization_matches / max(count, 1),
+        "top1_counts": {
+            "pii": int(top1_counts[0].item()),
+            "entropy": int(top1_counts[1].item()),
+            "leet": int(top1_counts[2].item()),
+        },
+        "weak_target_counts": {
+            "pii": int(target_counts[0].item()),
+            "entropy": int(target_counts[1].item()),
+            "leet": int(target_counts[2].item()),
+        },
+        "feature_buckets": bucket_metrics,
     }
+
+
+def expert_name(index: int) -> str:
+    return ("pii", "entropy", "leet")[index]

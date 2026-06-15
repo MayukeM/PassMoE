@@ -18,7 +18,13 @@ from model import PassMoE, count_parameters
 LOG_FIELDS = [
     "epoch",
     "train_loss",
+    "train_lm_loss",
+    "train_router_specialization_loss",
+    "train_router_specialization_agreement",
     "val_loss",
+    "val_lm_loss",
+    "val_router_specialization_loss",
+    "val_router_specialization_agreement",
     "lr",
     "train_valid_tokens",
     "val_valid_tokens",
@@ -85,7 +91,13 @@ class Trainer:
             row = {
                 "epoch": epoch,
                 "train_loss": train_loss,
+                "train_lm_loss": float(train_stats.get("lm_loss", train_loss)),
+                "train_router_specialization_loss": float(train_stats.get("router_specialization_loss", 0.0)),
+                "train_router_specialization_agreement": float(train_stats.get("router_specialization_agreement", 0.0)),
                 "val_loss": val_loss,
+                "val_lm_loss": float(val_stats.get("lm_loss", val_loss)),
+                "val_router_specialization_loss": float(val_stats.get("router_specialization_loss", 0.0)),
+                "val_router_specialization_agreement": float(val_stats.get("router_specialization_agreement", 0.0)),
                 "lr": self.optimizer.param_groups[0]["lr"],
                 "train_valid_tokens": train_stats["valid_tokens"],
                 "val_valid_tokens": val_stats["valid_tokens"],
@@ -118,6 +130,9 @@ class Trainer:
     def train_epoch(self, epoch: int) -> dict[str, Any]:
         self.model.train()
         total_loss = 0.0
+        total_lm_loss = 0.0
+        total_router_loss = 0.0
+        total_router_agreement = 0.0
         total_items = 0
         total_batches = 0
         zero_token_batches = 0
@@ -127,6 +142,9 @@ class Trainer:
             batch = move_batch(batch, self.device)
             outputs = self.model(**batch)
             loss = outputs["loss"]
+            lm_loss = outputs.get("lm_loss", loss)
+            router_loss = outputs.get("router_specialization_loss")
+            router_agreement = outputs.get("router_specialization_agreement")
             weight = batch_loss_weight(outputs, batch)
             if weight == 0:
                 zero_token_batches += 1
@@ -139,10 +157,18 @@ class Trainer:
             self.optimizer.step()
 
             total_loss += float(loss.detach().cpu()) * weight
+            total_lm_loss += float(lm_loss.detach().cpu()) * weight
+            if torch.is_tensor(router_loss):
+                total_router_loss += float(router_loss.detach().cpu()) * weight
+            if torch.is_tensor(router_agreement):
+                total_router_agreement += float(router_agreement.detach().cpu()) * weight
             total_items += weight
             progress.set_postfix(loss=float(loss.detach().cpu()), valid_tokens=weight)
         return {
             "loss": total_loss / max(total_items, 1),
+            "lm_loss": total_lm_loss / max(total_items, 1),
+            "router_specialization_loss": total_router_loss / max(total_items, 1),
+            "router_specialization_agreement": total_router_agreement / max(total_items, 1),
             "valid_tokens": total_items,
             "batches": total_batches,
             "zero_token_batches": zero_token_batches,
@@ -152,6 +178,9 @@ class Trainer:
     def evaluate_loss(self, loader: DataLoader) -> dict[str, Any]:
         self.model.eval()
         total_loss = 0.0
+        total_lm_loss = 0.0
+        total_router_loss = 0.0
+        total_router_agreement = 0.0
         total_items = 0
         total_batches = 0
         zero_token_batches = 0
@@ -160,14 +189,25 @@ class Trainer:
             batch = move_batch(batch, self.device)
             outputs = self.model(**batch)
             loss = outputs["loss"]
+            lm_loss = outputs.get("lm_loss", loss)
+            router_loss = outputs.get("router_specialization_loss")
+            router_agreement = outputs.get("router_specialization_agreement")
             weight = batch_loss_weight(outputs, batch)
             if weight == 0:
                 zero_token_batches += 1
                 continue
             total_loss += float(loss.detach().cpu()) * weight
+            total_lm_loss += float(lm_loss.detach().cpu()) * weight
+            if torch.is_tensor(router_loss):
+                total_router_loss += float(router_loss.detach().cpu()) * weight
+            if torch.is_tensor(router_agreement):
+                total_router_agreement += float(router_agreement.detach().cpu()) * weight
             total_items += weight
         return {
             "loss": total_loss / max(total_items, 1),
+            "lm_loss": total_lm_loss / max(total_items, 1),
+            "router_specialization_loss": total_router_loss / max(total_items, 1),
+            "router_specialization_agreement": total_router_agreement / max(total_items, 1),
             "valid_tokens": total_items,
             "batches": total_batches,
             "zero_token_batches": zero_token_batches,

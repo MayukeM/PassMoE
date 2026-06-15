@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch.utils.data import DataLoader
 
 from config import Config
 from data import (
     FeatureExtractor,
+    PasswordDataset,
     create_data_loaders,
     encode_targeted_record,
     format_targeted_prompt,
@@ -96,6 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--seed", type=int, default=42)
     analyze.add_argument("--out", default="")
     analyze.set_defaults(func=cmd_analyze_fusion)
+
+    specialize = sub.add_parser(
+        "analyze-specialization",
+        help="Analyze router/expert specialization across PII, entropy, and leetspeak buckets",
+    )
+    add_common_args(specialize)
+    specialize.add_argument("--max-samples", type=int, default=200)
+    specialize.add_argument("--out", default="")
+    specialize.set_defaults(func=cmd_analyze_specialization)
     return parser
 
 
@@ -125,6 +136,9 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lora-rank", type=int, default=None)
     parser.add_argument("--router-hidden-dim", type=int, default=None)
     parser.add_argument("--top-k-experts", type=int, default=None)
+    parser.add_argument("--router-specialization-weight", type=float, default=None)
+    parser.add_argument("--router-specialization-min-signal", type=float, default=None)
+    parser.add_argument("--router-specialization-smoothing", type=float, default=None)
     parser.add_argument("--max-length", type=int, default=None)
     parser.add_argument("--generation-max-new-tokens", type=int, default=None)
     parser.add_argument("--generation-batch-size", type=int, default=None)
@@ -391,6 +405,38 @@ def cmd_analyze_fusion(args: argparse.Namespace) -> None:
         bootstrap_iters=args.bootstrap_iters,
         seed=args.seed,
     )
+    text = json.dumps(report, indent=2)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text, encoding="utf-8")
+    print(text)
+
+
+def cmd_analyze_specialization(args: argparse.Namespace) -> None:
+    config = config_from_checkpoint_or_args(args) if args.checkpoint else config_from_args(args)
+    records = load_records(config.data_path, max_samples=getattr(args, "max_samples", None))
+    if not records:
+        raise ValueError(f"No valid records found in {config.data_path}")
+    model, tokenizer = build_model_and_tokenizer(config)
+    device = torch.device(config.device)
+    model.to(device)
+    if args.checkpoint:
+        load_checkpoint(model, args.checkpoint, config.device)
+    dataset = PasswordDataset(records, tokenizer, config)
+    loader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers)
+    metrics = evaluate_router_distribution(model, loader, config.device)
+    report = {
+        "data_path": config.data_path,
+        "checkpoint": args.checkpoint,
+        "num_records": len(records),
+        "metrics": metrics,
+        "expert_order": ["pii", "entropy", "leet"],
+        "feature_order": ["pii", "leet", "entropy"],
+        "claim_boundary": (
+            "This is a router/expert specialization diagnostic. It shows whether the experts "
+            "separate by interpretable feature buckets; it is not an SR@K claim."
+        ),
+    }
     text = json.dumps(report, indent=2)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)

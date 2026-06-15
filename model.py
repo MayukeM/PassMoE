@@ -159,6 +159,29 @@ class PassMoE(nn.Module):
         logits = self.lm_head(mixed_hidden.to(dtype=lm_dtype))
 
         output = {"logits": logits, "expert_weights": expert_weights, "routed_weights": routed_weights}
+        specialization_weight = float(getattr(self.config, "router_specialization_weight", 0.0) or 0.0)
+        if specialization_weight > 0.0:
+            target_index, target_probs = router_specialization_target_distribution(
+                features=features,
+                min_signal=float(getattr(self.config, "router_specialization_min_signal", 0.05) or 0.0),
+                smoothing=float(getattr(self.config, "router_specialization_smoothing", 0.05) or 0.0),
+            )
+            output["router_target_index"] = target_index
+            output["router_target_probs"] = target_probs
+            log_weights = expert_weights.clamp_min(1e-8).log()
+            target_probs = target_probs.to(dtype=expert_weights.dtype)
+            per_sample_loss = -(target_probs * log_weights).sum(dim=-1)
+            class_counts = torch.bincount(target_index.detach(), minlength=3).to(
+                device=per_sample_loss.device,
+                dtype=per_sample_loss.dtype,
+            )
+            class_weights = class_counts.sum().clamp_min(1.0) / class_counts.clamp_min(1.0)
+            sample_weights = class_weights[target_index].to(dtype=per_sample_loss.dtype)
+            sample_weights = sample_weights / sample_weights.mean().clamp_min(1e-8)
+            output["router_specialization_loss"] = (per_sample_loss * sample_weights).mean()
+            output["router_specialization_agreement"] = (
+                expert_weights.argmax(dim=-1).eq(target_index).float().mean()
+            )
         if labels is not None:
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = labels[:, 1:].contiguous()
@@ -171,6 +194,9 @@ class PassMoE(nn.Module):
                     shift_labels.view(-1),
                     ignore_index=-100,
                 )
+            output["lm_loss"] = loss
+            if "router_specialization_loss" in output:
+                loss = loss + specialization_weight * output["router_specialization_loss"]
             output["loss"] = loss
             output["valid_tokens"] = valid_tokens
         return output
@@ -495,6 +521,41 @@ def feature_vector_for_text(text: str, pii: dict[str, Any] | None = None) -> lis
     from data import FeatureExtractor
 
     return FeatureExtractor(LEET_DICTIONARY).extract(text, pii)
+
+
+def router_specialization_target_distribution(
+    features: torch.Tensor,
+    min_signal: float = 0.05,
+    smoothing: float = 0.05,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Derive a weak, interpretable router target from [PII, leet, entropy].
+
+    Expert order is fixed as: PII -> entropy -> leet.
+    """
+
+    if features.dim() != 2 or features.size(-1) != 3:
+        raise ValueError(f"Expected [batch, 3] features, got {tuple(features.shape)}")
+
+    device = features.device
+    pii_score = features[:, 0]
+    leet_score = features[:, 1]
+    entropy_index = torch.ones(features.size(0), dtype=torch.long, device=device)
+    leet_index = torch.full_like(entropy_index, 2)
+    pii_index = torch.zeros_like(entropy_index)
+
+    # PII is a targeted-password signal, while entropy is the default fallback.
+    # Prioritize PII/semantic evidence before morphology, then use entropy for
+    # the generic high-uncertainty expert.
+    target_index = entropy_index
+    target_index = torch.where(leet_score >= float(min_signal), leet_index, target_index)
+    target_index = torch.where(pii_score >= float(min_signal), pii_index, target_index)
+
+    smoothing = min(max(float(smoothing), 0.0), 0.95)
+    off_value = smoothing / 2.0
+    target_probs = torch.full((features.size(0), 3), off_value, dtype=features.dtype, device=device)
+    target_probs.scatter_(1, target_index.unsqueeze(1), 1.0 - smoothing)
+    target_probs = target_probs / target_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    return target_index, target_probs
 
 
 def count_parameters(model: nn.Module) -> dict[str, int | float]:

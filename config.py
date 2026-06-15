@@ -56,6 +56,9 @@ class Config:
     router_hidden_dim: int = 64
     top_k_experts: int = 2
     dropout: float = 0.1
+    router_specialization_weight: float = 0.0
+    router_specialization_min_signal: float = 0.05
+    router_specialization_smoothing: float = 0.05
 
     # Tiny fallback model.
     tiny_layers: int = 2

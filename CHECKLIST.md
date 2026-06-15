@@ -103,6 +103,9 @@
 - [x] raw-only status/report gate fixed for `manifest.post_fusion=false`; the winning artifact is `status=complete`, `claim_status=better_or_equal_baseline`.
 - [x] fusion diagnostic on the winning raw artifact is recorded as supplementary only: SR@100 `0.1080`, SR@50 `0.0960`, 10 worsened ranks.
 - [x] formal runner defaults now reproduce the winning route: `qwen_fielddrop_base_identity_clixsense_500_raw`, `epochs=0`, `post_fusion=false`.
+- [x] default-off router specialization objective added, using batch-balanced PII-priority / leet-priority / entropy-fallback weak labels.
+- [x] `main.py analyze-specialization` and `scripts/analyze_expert_specialization.py` added for per-bucket expert routing diagnostics.
+- [x] tiny CPU expert-specialization diagnostic completed: untrained top-1 agreement `0.2813`; trained `tiny_router_specialization_priority_smoke` top-1 agreement `1.0000` on 64 records, with PII/entropy/leet buckets routed to their intended experts.
 
 ## Implementation
 

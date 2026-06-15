@@ -51,6 +51,10 @@ def main() -> None:
     parser.add_argument("--generation-max-new-tokens", type=int, default=32)
     parser.add_argument("--generation-batch-size", type=int, default=32)
     parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--top-k-experts", type=int, default=2)
+    parser.add_argument("--router-specialization-weight", type=float, default=0.0)
+    parser.add_argument("--router-specialization-min-signal", type=float, default=0.05)
+    parser.add_argument("--router-specialization-smoothing", type=float, default=0.05)
     parser.add_argument("--beam-width", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--target-eval-samples", type=int, default=500)
@@ -212,6 +216,10 @@ def main() -> None:
         "max_length": args.max_length,
         "generation_max_new_tokens": args.generation_max_new_tokens,
         "generation_batch_size": args.generation_batch_size,
+        "top_k_experts": args.top_k_experts,
+        "router_specialization_weight": args.router_specialization_weight,
+        "router_specialization_min_signal": args.router_specialization_min_signal,
+        "router_specialization_smoothing": args.router_specialization_smoothing,
         "seed": args.seed,
         "device": manifest_device,
         "requested_dtype": args.dtype,
@@ -826,6 +834,14 @@ def build_train_command(args: argparse.Namespace, device: str, dtype: str) -> li
         str(args.generation_batch_size),
         "--lora-rank",
         str(args.lora_rank),
+        "--top-k-experts",
+        str(args.top_k_experts),
+        "--router-specialization-weight",
+        str(args.router_specialization_weight),
+        "--router-specialization-min-signal",
+        str(args.router_specialization_min_signal),
+        "--router-specialization-smoothing",
+        str(args.router_specialization_smoothing),
         "--beam-width",
         str(args.beam_width),
         "--target-eval-samples",
@@ -879,6 +895,14 @@ def build_eval_command(args: argparse.Namespace, device: str, dtype: str, checkp
         str(args.generation_max_new_tokens),
         "--generation-batch-size",
         str(args.generation_batch_size),
+        "--top-k-experts",
+        str(args.top_k_experts),
+        "--router-specialization-weight",
+        str(args.router_specialization_weight),
+        "--router-specialization-min-signal",
+        str(args.router_specialization_min_signal),
+        "--router-specialization-smoothing",
+        str(args.router_specialization_smoothing),
         "--beam-width",
         str(args.beam_width),
         "--target-eval-samples",
@@ -1547,6 +1571,26 @@ def build_runner_command_from_manifest(manifest: dict[str, Any]) -> list[str]:
         str(manifest.get("generation_batch_size", 32)),
         "--lora-rank",
         command_option(execution_command, "--lora-rank", "16"),
+        "--top-k-experts",
+        command_option(execution_command, "--top-k-experts", str(manifest.get("top_k_experts", 2))),
+        "--router-specialization-weight",
+        command_option(
+            execution_command,
+            "--router-specialization-weight",
+            str(manifest.get("router_specialization_weight", 0.0)),
+        ),
+        "--router-specialization-min-signal",
+        command_option(
+            execution_command,
+            "--router-specialization-min-signal",
+            str(manifest.get("router_specialization_min_signal", 0.05)),
+        ),
+        "--router-specialization-smoothing",
+        command_option(
+            execution_command,
+            "--router-specialization-smoothing",
+            str(manifest.get("router_specialization_smoothing", 0.05)),
+        ),
         "--beam-width",
         command_option(execution_command, "--beam-width", "100"),
         "--seed",

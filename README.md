@@ -102,6 +102,40 @@ PassMoE and FieldDrop are deliberately separated in this repository:
   generation, and optional conservative fusion implemented in this repository.
 - Any paper-facing claim must not describe FieldDrop as a PassMoE contribution.
 
+## Expert Specialization Diagnostic
+
+The default formal route leaves this off. For mechanism evidence only, PassMoE
+now supports a default-off router specialization objective:
+
+- `--router-specialization-weight`: enables the auxiliary router loss.
+- `--top-k-experts 1`: makes each sample update one dominant expert in the
+  diagnostic route.
+- weak target rule: PII signal first, leetspeak/morphology second, entropy as
+  the fallback expert.
+- the router loss is batch-balanced so the entropy/default expert cannot win
+  only because it is the majority bucket.
+
+CPU tiny diagnostic on 64 ClixSense records:
+
+| Route | Top-1 weak-label agreement | PII bucket avg PII expert | Entropy bucket avg entropy expert | Leet bucket avg leet expert |
+|---|---:|---:|---:|---:|
+| untrained router | 0.2813 | 0.2861 | 0.4127 | 0.3007 |
+| trained diagnostic | 1.0000 | 0.9779 | 0.9825 | 0.9236 |
+
+Reproduce the diagnostic:
+
+```bash
+python main.py analyze-specialization --base-model tiny --task trawling --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-samples 64 --batch-size 8 --hidden-dim 32 --lora-rank 4 --router-hidden-dim 16 --top-k-experts 1 --device cpu --out artifacts/diagnostics/router_specialization_init_priority.json
+python main.py train --base-model tiny --task trawling --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-train-samples 64 --epochs 20 --batch-size 8 --learning-rate 0.005 --hidden-dim 32 --lora-rank 4 --router-hidden-dim 16 --top-k-experts 1 --max-length 32 --router-specialization-weight 10.0 --router-specialization-smoothing 0.02 --skip-generation --run-name tiny_router_specialization_priority_smoke --device cpu --seed 42
+python main.py analyze-specialization --checkpoint runs/tiny_router_specialization_priority_smoke/best.pt --data-path data/clixsense/clixsense_test_500_from_fd500k_p00.json --max-samples 64 --batch-size 8 --device cpu --out artifacts/diagnostics/router_specialization_priority_smoke.json
+```
+
+This is not an SR@K result and does not replace the validated formal run. It
+only shows that the router/expert path can learn an interpretable division of
+labor under an explicit, lightweight specialization objective. A Qwen/FieldDrop
+CUDA diagnostic is still required before using this as a paper-facing neural
+PassMoE claim.
+
 ## Formal PassMoE Run
 
 For the paper-facing targeted comparison, use the formal runner on a CUDA
