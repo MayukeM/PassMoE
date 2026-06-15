@@ -524,7 +524,7 @@ def load_json_if_exists(path: Path) -> dict[str, Any]:
 
 
 def load_jsonl_if_exists(path: Path) -> list[dict[str, Any]] | None:
-    if not path or not path.exists():
+    if not path or not path.exists() or not path.is_file():
         return None
     rows = []
     with path.open("r", encoding="utf-8-sig", errors="ignore") as handle:

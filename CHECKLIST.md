@@ -95,7 +95,9 @@
 - [x] first CUDA formal neural comparison completed on 500 eval rows and failed the effect gate: raw SR@100 `0.0240`, fused SR@100 `0.0400`, FieldDrop baseline SR@100 `0.0740`.
 - [x] implementation diagnosis found non-identity expert initialization: fresh expert LayerNorm changed frozen backbone hidden states even with zero low-rank residual.
 - [x] `LowRankExpert` now preserves the foundation path at initialization with `hidden + residual`; tiny identity check max logit difference is `0.0`.
-- [ ] run a CUDA pilot after the identity-preserving expert fix before spending another full 500-row formal pass.
+- [x] CUDA pilot after the identity-preserving expert fix completed: `identity_fix_pilot100` raw SR@100 `0.0700` on 100 rows, versus old formal first-100 raw SR@100 `0.0300`.
+- [x] no-fusion validator crash fixed; empty fused JSONL paths are no longer read as the current directory.
+- [ ] full identity-fix CUDA formal rerun is running/needed with `--no-post-fusion` to test raw PassMoE against the 500-row FieldDrop contract.
 - [ ] rerun the full CUDA formal neural comparison only if the pilot shows raw SR recovering toward the FieldDrop/PassLLM baseline.
 
 ## Implementation
@@ -125,4 +127,4 @@
 
 - [x] smoke result summarized.
 - [x] failed formal CUDA result summarized honestly.
-- [x] next action is explicit: validate the identity-preserving expert fix with a CUDA pilot, then rerun the formal comparison only if the pilot is promising.
+- [x] next action is explicit: run one full no-fusion identity-fix formal comparison, then decide whether raw PassMoE is enough or whether the paper claim must rely on PassLLM-foundation fusion.
