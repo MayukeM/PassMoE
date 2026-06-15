@@ -111,11 +111,10 @@ machine:
 python scripts/run_formal_passmoe.py --execute
 ```
 
-It preflights local data/model/baseline paths, runs PassMoE targeted training
-on the imported PassLLM/FieldDrop foundation when `--base-adapter fielddrop` is
-selected, scores raw `targeted_input_output.jsonl`, applies the conservative
-PassMoE-style fusion, and writes raw/fused baseline comparisons plus a compact
-result report to:
+It preflights local data/model/baseline paths, builds the imported
+PassLLM/FieldDrop foundation when `--base-adapter fielddrop` is selected, runs
+targeted generation, scores raw `targeted_input_output.jsonl`, and writes a
+compact result report to:
 
 ```text
 artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/
@@ -131,6 +130,36 @@ The default formal comparison is now aligned to the local PassLLM quick anchor:
 - seed: `42`
 - actual local data cardinality: filtered train `1,063,798` rows, evaluation
   `500` rows
+
+### Current Validated CUDA Result
+
+The claim-carrying CUDA artifact is:
+
+```text
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/
+```
+
+It uses the imported PassLLM/FieldDrop adapter as the frozen foundation,
+preserves the PassMoE expert path as an identity residual at initialization,
+and runs raw targeted generation without additional residual training
+(`--epochs 0 --no-post-fusion`). This is the current rescued configuration;
+the 3-epoch residual-training variant was measured and stayed below baseline.
+
+Validated 500-row metrics against `fd500k_p00_unique`:
+
+| Metric | FieldDrop baseline | Current raw | Delta |
+|---|---:|---:|---:|
+| SR@1 | 0.0200 | 0.0160 | -0.0040 |
+| SR@10 | 0.0600 | 0.0660 | +0.0060 |
+| SR@50 | 0.0740 | 0.0980 | +0.0240 |
+| SR@100 | 0.0740 | 0.1060 | +0.0320 |
+
+`formal_validation.json` is `passed`, and
+`formal_result_report.json` marks `claim_status=better_or_equal_baseline`.
+Do not describe this as evidence that supervised low-rank PassMoE residual
+training improved FieldDrop; the measured successful route is
+foundation-preserving targeted generation, with PassMoE expert fusion kept
+as a supplementary diagnostic.
 
 Do not use `clixsense_sample_10k.json` for the formal run: the alignment audit
 found it contains all 500 `fd500k_p00` evaluation targets.
@@ -154,11 +183,22 @@ PowerShell to execute the formal runner and then refresh status/report:
 .\artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k\run_formal_cuda.ps1
 ```
 
-The equivalent direct command is:
+The default direct command now reproduces the current validated
+identity-foundation route:
 
 ```powershell
-python scripts\run_formal_passmoe.py --execute --run-name qwen_fielddrop_passmoe_clixsense_10k --seed 42
+python scripts\run_formal_passmoe.py --execute --seed 42
 ```
+
+The fully expanded equivalent command is:
+
+```powershell
+python scripts\run_formal_passmoe.py --execute --run-name qwen_fielddrop_base_identity_clixsense_500_raw --base-model local-qwen --base-adapter fielddrop --data-path data\clixsense\clixsense_train_50_no_fd500k_targets.jsonl --test-data-path data\clixsense\clixsense_test_500_from_fd500k_p00.json --epochs 0 --max-train-samples 10000 --batch-size 8 --max-length 256 --generation-max-new-tokens 32 --generation-batch-size 32 --lora-rank 16 --beam-width 100 --target-eval-samples 500 --target-candidates-per-user 100 --budgets 1,10,50,100 --device cuda --dtype float16 --seed 42 --no-post-fusion --force
+```
+
+Use `--epochs > 0` only for residual-training ablations. Use `--post-fusion`
+only for supplementary fusion diagnostics; it is not the primary validated
+claim path.
 
 Preflight validates the aligned data files, baseline metric contract, local Qwen
 model directory, tokenizer/weights, and the imported PassLLM/FieldDrop LoRA
@@ -243,7 +283,7 @@ Recovery commands for interrupted formal runs:
 
 ```bash
 # Inspect the current formal artifact state and get a recommended next command.
-python scripts/inspect_formal_status.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+python scripts/inspect_formal_status.py --artifacts-dir artifacts\formal\qwen_fielddrop_base_identity_clixsense_500_raw
 
 # Continue training from the last checkpoint; --epochs is the target total epoch count.
 python scripts/run_formal_passmoe.py --execute --resume-from runs\qwen_fielddrop_passmoe_clixsense_10k\last.pt
@@ -266,26 +306,26 @@ JSONL files, scores, validation output, checkpoints, and per-command logs. It
 classifies states such as `needs_model_execution`, `partial_generation`,
 `needs_postprocess`, `validation_failed`, and `complete`, then prints the next
 recommended command. It only returns `complete` when the required JSONL,
-postprocess artifacts, and a passed `formal_validation.json` are all present,
-so a stale validation file cannot mask missing outputs.
+manifest-selected score/fusion artifacts, and a passed `formal_validation.json`
+are all present, so a stale validation file cannot mask missing outputs.
 
 To render a concise paper-facing status/result report from the same artifacts:
 
 ```bash
-python scripts/render_formal_report.py --artifacts-dir artifacts\formal\qwen_fielddrop_passmoe_clixsense_10k
+python scripts/render_formal_report.py --artifacts-dir artifacts\formal\qwen_fielddrop_base_identity_clixsense_500_raw
 ```
 
 This writes:
 
 ```text
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_result_report.md
-artifacts/formal/qwen_fielddrop_passmoe_clixsense_10k/formal_result_report.json
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/formal_result_report.md
+artifacts/formal/qwen_fielddrop_base_identity_clixsense_500_raw/formal_result_report.json
 ```
 
-The current formal report is `status=needs_model_execution` and
-`claim_status=incomplete`: preflight and model-construction checks pass, but no
-500-row CUDA-generated JSONL or score artifacts exist yet. CPU/subset smoke
-runs are marked `diagnostic_only` and are not treated as PassLLM comparisons.
+The current formal report is `status=complete` and
+`claim_status=better_or_equal_baseline` for
+`qwen_fielddrop_base_identity_clixsense_500_raw`. CPU/subset smoke runs are
+marked `diagnostic_only` and are not treated as PassLLM comparisons.
 
 In formal `--execute` mode, the runner now requires the scored JSONL row count
 to match `--target-eval-samples`. Use `--resume-generation` to finish a partial
@@ -314,9 +354,10 @@ the completed artifacts. You can rerun that gate directly:
 python scripts/validate_formal_outputs.py
 ```
 
-It checks the `fd500k_p00_unique` 500-row contract, raw/fused SR metrics,
-comparison deltas, JSONL row counts, candidate budget, fusion analysis, and
-that conservative fusion did not worsen any ranks. Formal score commands
+It checks the `fd500k_p00_unique` 500-row contract, raw SR metrics,
+comparison deltas, JSONL row counts, and candidate budget. When
+`--post-fusion` is enabled it also checks fused SR metrics, fusion analysis,
+and that conservative fusion did not worsen any ranks. Formal score commands
 recompute ranks from each row's `outputPasswords`, and the validator checks that
 raw/fused `min_cracked_guess_number` fields match those recomputed ranks and
 that candidate lists do not contain empty entries, duplicate passwords, or the

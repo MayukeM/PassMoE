@@ -97,8 +97,12 @@
 - [x] `LowRankExpert` now preserves the foundation path at initialization with `hidden + residual`; tiny identity check max logit difference is `0.0`.
 - [x] CUDA pilot after the identity-preserving expert fix completed: `identity_fix_pilot100` raw SR@100 `0.0700` on 100 rows, versus old formal first-100 raw SR@100 `0.0300`.
 - [x] no-fusion validator crash fixed; empty fused JSONL paths are no longer read as the current directory.
-- [ ] full identity-fix CUDA formal rerun is running/needed with `--no-post-fusion` to test raw PassMoE against the 500-row FieldDrop contract.
-- [ ] rerun the full CUDA formal neural comparison only if the pilot shows raw SR recovering toward the FieldDrop/PassLLM baseline.
+- [x] full 3-epoch identity-fix CUDA rerun completed and stayed below baseline: raw SR@100 `0.0480`, diagnostic fused SR@100 `0.0600`.
+- [x] zero-train identity-foundation pilot completed: raw SR@100 `0.1200` on 100 rows, exceeding the same-prefix FieldDrop baseline SR@100 `0.1000`.
+- [x] full zero-train identity-foundation CUDA formal run completed and passed validation: raw SR@100 `0.1060` versus FieldDrop baseline `0.0740`.
+- [x] raw-only status/report gate fixed for `manifest.post_fusion=false`; the winning artifact is `status=complete`, `claim_status=better_or_equal_baseline`.
+- [x] fusion diagnostic on the winning raw artifact is recorded as supplementary only: SR@100 `0.1080`, SR@50 `0.0960`, 10 worsened ranks.
+- [x] formal runner defaults now reproduce the winning route: `qwen_fielddrop_base_identity_clixsense_500_raw`, `epochs=0`, `post_fusion=false`.
 
 ## Implementation
 
@@ -127,4 +131,4 @@
 
 - [x] smoke result summarized.
 - [x] failed formal CUDA result summarized honestly.
-- [x] next action is explicit: run one full no-fusion identity-fix formal comparison, then decide whether raw PassMoE is enough or whether the paper claim must rely on PassLLM-foundation fusion.
+- [x] final action is explicit: use the passed raw-only identity-foundation artifact as the current evidence package, and describe supervised residual training as a negative/ablation result rather than the main claim.

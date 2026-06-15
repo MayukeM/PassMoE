@@ -161,14 +161,17 @@ def classify_status(
             "command": command,
         }
 
-    required_post = ["score", "comparison", "fused_jsonl", "fused_score", "fused_comparison", "fusion_analysis"]
+    post_fusion_enabled = bool(manifest.get("post_fusion", True))
+    required_post = ["score", "comparison"]
+    if post_fusion_enabled:
+        required_post.extend(["fused_jsonl", "fused_score", "fused_comparison", "fusion_analysis"])
     missing_post = [name for name in required_post if not files.get(name, {}).get("exists")]
     if missing_post:
         return "needs_postprocess", {
             "reason": f"missing postprocess artifacts: {missing_post}",
             "command": build_run_formal_command(run_name, manifest, "--skip-train-if-jsonl-exists", "--force"),
         }
-    if expected_rows and fused_rows is not None and fused_rows != expected_rows:
+    if post_fusion_enabled and expected_rows and fused_rows is not None and fused_rows != expected_rows:
         return "postprocess_row_mismatch", {
             "reason": f"fused JSONL has {fused_rows}/{expected_rows} rows",
             "command": build_run_formal_command(run_name, manifest, "--skip-train-if-jsonl-exists", "--force"),
@@ -558,7 +561,7 @@ def inspect_progress_markers(log_dir: Path) -> dict[str, Any]:
 
 
 def count_jsonl_rows(path: Path) -> int | None:
-    if not path or not path.exists():
+    if not path or not path.exists() or not path.is_file():
         return None
     with path.open("r", encoding="utf-8-sig", errors="ignore") as handle:
         return sum(1 for line in handle if line.strip())

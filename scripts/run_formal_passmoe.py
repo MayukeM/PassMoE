@@ -33,7 +33,7 @@ def main() -> None:
             "PassLLM baseline/foundation adapter, not a PassMoE method component."
         )
     )
-    parser.add_argument("--run-name", default="qwen_fielddrop_passmoe_clixsense_10k")
+    parser.add_argument("--run-name", default="qwen_fielddrop_base_identity_clixsense_500_raw")
     parser.add_argument("--data-path", default=DEFAULT_DATA_PATH)
     parser.add_argument("--test-data-path", default=DEFAULT_TEST_DATA_PATH)
     parser.add_argument("--output-dir", default="runs")
@@ -43,7 +43,7 @@ def main() -> None:
     parser.add_argument("--base-model", default="local-qwen")
     parser.add_argument("--base-adapter", default="fielddrop")
     parser.add_argument("--prompt-template-id", default="0")
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-train-samples", type=int, default=10000)
     parser.add_argument("--max-eval-samples", type=int, default=0)
@@ -92,6 +92,7 @@ def main() -> None:
         action="store_false",
         help="Skip loading the local backbone and adapter during preflight.",
     )
+    parser.add_argument("--post-fusion", dest="post_fusion", action="store_true")
     parser.add_argument("--no-post-fusion", dest="post_fusion", action="store_false")
     parser.add_argument("--fusion-max-expert-candidates", type=int, default=80)
     parser.add_argument("--fusion-score-existing-weight", type=float, default=1.0)
@@ -99,7 +100,7 @@ def main() -> None:
     parser.add_argument("--fusion-score-rank-offset", type=float, default=2.0)
     parser.add_argument("--fusion-bootstrap-iters", type=int, default=2000)
     parser.add_argument("--force", action="store_true", help="Allow overwriting existing score/comparison files.")
-    parser.set_defaults(post_fusion=True)
+    parser.set_defaults(post_fusion=False)
     parser.set_defaults(length_audit=True)
     parser.set_defaults(deep_model_check=True)
     parser.set_defaults(output_validation=True)
@@ -1531,7 +1532,7 @@ def build_runner_command_from_manifest(manifest: dict[str, Any]) -> list[str]:
         "--prompt-template-id",
         command_option(execution_command, "--prompt-template-id", "0"),
         "--epochs",
-        command_option(execution_command, "--epochs", "3"),
+        command_option(execution_command, "--epochs", "0"),
         "--batch-size",
         command_option(execution_command, "--batch-size", "8"),
         "--max-train-samples",

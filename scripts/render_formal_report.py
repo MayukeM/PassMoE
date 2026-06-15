@@ -61,7 +61,7 @@ def build_report(artifacts_dir: Path) -> dict[str, Any]:
             "reason": "diagnostic CPU/subset run is not a formal comparison",
             "command": (
                 "python scripts/run_formal_passmoe.py --execute "
-                "--run-name qwen_fielddrop_passmoe_clixsense_10k --seed 42"
+                "--run-name qwen_fielddrop_base_identity_clixsense_500_raw --seed 42"
             ),
         }
     elif claim_status == "supplementary_fusion_only":
@@ -69,7 +69,7 @@ def build_report(artifacts_dir: Path) -> dict[str, Any]:
             "reason": "score-only fusion artifact is supplementary and does not replace the full neural PassMoE run",
             "command": (
                 "python scripts/run_formal_passmoe.py --execute "
-                "--run-name qwen_fielddrop_passmoe_clixsense_10k --seed 42"
+                "--run-name qwen_fielddrop_base_identity_clixsense_500_raw --seed 42"
             ),
         }
 
